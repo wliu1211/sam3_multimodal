@@ -1,3 +1,4 @@
 [submodule "sam3"]
 	path = sam3
-	url = https://github.com/facebookresearch/sam3.git
+	url = https://github.com/wliu1211/sam3_find_objects.git
+	# url = git@github.com:wliu1211/sam3_find_objects.git # for ssh only

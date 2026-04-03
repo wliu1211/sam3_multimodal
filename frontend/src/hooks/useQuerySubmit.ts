@@ -10,6 +10,21 @@ interface UseQuerySubmitReturn {
   reset: () => void;
 }
 
+/** Readable message for any thrown/rejected value (axios quirks, strings, etc.). */
+function formatSubmitError(err: unknown): string {
+  if (err instanceof Error && err.message.trim()) {
+    return err.message;
+  }
+  if (typeof err === "string" && err.trim()) {
+    return err;
+  }
+  if (err && typeof err === "object" && "message" in err) {
+    const m = (err as { message?: unknown }).message;
+    if (typeof m === "string" && m.trim()) return m;
+  }
+  return "An unexpected error occurred. Please try again.";
+}
+
 export function useQuerySubmit(): UseQuerySubmitReturn {
   const [state, setState] = useState<QueryState>({
     status: "idle",
@@ -24,9 +39,7 @@ export function useQuerySubmit(): UseQuerySubmitReturn {
       const result = await submitQuery({ image, prompt });
       setState({ status: "success", result, error: null });
     } catch (err) {
-      const message = err instanceof Error
-        ? err.message
-        : "An unexpected error occurred. Please try again.";
+      const message = formatSubmitError(err);
       setState({ status: "error", result: null, error: message });
     }
   }, []);

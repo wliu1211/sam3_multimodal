@@ -94,11 +94,10 @@ async def lifespan(app: FastAPI):
             checkpoint_path = str(sam3_checkpoint),
             load_from_HF    = False,
         )
-        # Checkpoint weights are bfloat16; CPU cannot auto-cast between dtypes
-        # the way CUDA does with torch.autocast, so we normalise everything to
-        # float32 here to avoid "BFloat16 and Float" matmul mismatches.
-        if device == "cpu":
-            sam3_model = sam3_model.float()
+        # Checkpoint weights are often bfloat16; without a single global autocast
+        # policy, SAM 3 can mix dtypes internally and hit "BFloat16 and Float"
+        # matmul errors on both CPU and CUDA. Float32 everywhere avoids that.
+        sam3_model = sam3_model.float()
         # Store the Sam3Processor — this is what vision.py uses
         models["sam3"] = Sam3Processor(sam3_model, device=device)
         logger.info(f"[startup] SAM 3 loaded in {time.time() - t0:.1f}s on {device}")

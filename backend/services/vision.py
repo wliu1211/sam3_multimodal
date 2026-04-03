@@ -30,6 +30,29 @@ CLIP_AMBIGUOUS_HIGH   = 0.70
 MIN_BOX_AREA_FRACTION = 0.001
 CROP_PADDING_PX       = 12
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _mask_to_uint8_hw(mask) -> np.ndarray:
+    """SAM 3 returns masks as torch.BoolTensor (H, W) or numpy; RLE encoder needs uint8 ndarray."""
+    if isinstance(mask, torch.Tensor):
+        return mask.detach().cpu().numpy().astype(np.uint8, copy=False)
+    return np.asarray(mask, dtype=np.uint8)
+
+
+def _to_float_scalar(x) -> float:
+    if isinstance(x, torch.Tensor):
+        return float(x.detach().cpu().item())
+    return float(x)
+
+
+def _box_to_int_xyxy(box) -> tuple[int, int, int, int]:
+    if isinstance(box, torch.Tensor):
+        b = box.detach().cpu().flatten().tolist()
+        return int(b[0]), int(b[1]), int(b[2]), int(b[3])
+    return tuple(int(v) for v in box)
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 async def run_vision_pipeline(
@@ -108,8 +131,8 @@ def _detect_with_sam3(
       state = processor.set_image(image_pil)
       state = processor.set_text_prompt(text, state)
 
-      state["masks"]  → (N, H, W) bool array
-      state["boxes"]  → (N, 4)    array in [x1, y1, x2, y2] format
+      state["masks"]  → (N, H, W) bool torch.Tensor or numpy
+      state["boxes"]  → (N, 4)    [x1, y1, x2, y2] tensor or array
       state["scores"] → (N,)      confidence scores
 
     Returns list of {bounding_box, mask} dicts.
@@ -119,7 +142,6 @@ def _detect_with_sam3(
         raise RuntimeError("SAM 3 model is not loaded. Check startup logs.")
 
     # Set image — encodes visual features (expensive, done once per image)
-
     # Text prompt — finds all instances of base_class
     with torch.inference_mode():
         state = processor.set_image(image_pil)
@@ -129,16 +151,23 @@ def _detect_with_sam3(
     boxes  = state.get("boxes")   # (N, 4) array
     scores = state.get("scores")  # (N,) array
 
-    if masks is None or boxes is None or scores is None or len(masks) == 0:
+    if masks is None or boxes is None or scores is None:
+        return []
+
+    n = len(masks)
+    if n == 0:
         return []
 
     detections = []
-    for mask, box, score in zip(masks, boxes, scores):
-        x1, y1, x2, y2 = (int(v) for v in box)
+    for i in range(n):
+        mask = masks[i]
+        box = boxes[i]
+        score = scores[i]
+        x1, y1, x2, y2 = _box_to_int_xyxy(box)
         detections.append({
             "bounding_box": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-            "mask":         mask.astype(np.uint8),
-            "sam_score":    float(score),
+            "mask":         _mask_to_uint8_hw(mask),
+            "sam_score":    _to_float_scalar(score),
         })
 
     return detections
