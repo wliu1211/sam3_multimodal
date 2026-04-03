@@ -1,0 +1,12 @@
+.env
+venv/
+models/
+__pycache__/
+*.pyc
+*.pyo
+logs/
+storage/uploads/
+storage/results/
+db/queries.db
+*.pt
+*.pth
