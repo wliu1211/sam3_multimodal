@@ -26,6 +26,7 @@ Predicate downgrade chain:
   near         → (no downgrade — terminal predicate)
 """
 
+import asyncio
 import io
 import os
 import base64
@@ -48,6 +49,11 @@ CONTAINMENT_THRESHOLD = 0.90
 # Above AMBIGUOUS_HIGH → accept without spot-check.
 AMBIGUOUS_LOW  = 0.35
 AMBIGUOUS_HIGH = 0.70
+
+# Maximum number of edges sent to VTT. Edges are sorted by SGG confidence
+# descending before the cap; the weakest proposals are dropped first.
+# Without a cap, a scene with N objects can produce O(N²) edges.
+MAX_VTT_EDGES = 12
 
 # Predicate downgrade chains — key → next predicate if check fails.
 DOWNGRADE_CHAIN: dict[str, str | None] = {
@@ -103,20 +109,33 @@ async def verify_edges(
     _verify_attribute_containment(graph, img_w, img_h)
 
     # ── Step 2: Verify each edge ──────────────────────────────────────────────
-    verified_edges = []
-    for edge in graph.edges:
+    # Sort edges by SGG confidence and cap to MAX_VTT_EDGES before verification.
+    # A scene with N detected objects produces O(N²) candidate edges; without a
+    # cap, large queries make sequential Claude API calls for every pair.
+    candidate_edges = sorted(graph.edges, key=lambda e: e.confidence, reverse=True)
+    candidate_edges = candidate_edges[:MAX_VTT_EDGES]
+
+    # Resolve node references once so coroutines don't repeat the lookup.
+    tasks = []
+    for edge in candidate_edges:
         subject = graph.get_node(edge.subject_id)
         obj     = graph.get_node(edge.object_id)
-
         if subject is None or obj is None:
             continue
-
-        result_edge = await _verify_single_edge(
-            edge, subject, obj, image_pil, img_w, img_h, img_diag
+        tasks.append(
+            _verify_single_edge(edge, subject, obj, image_pil, img_w, img_h, img_diag)
         )
 
-        if result_edge is not None:
-            verified_edges.append(result_edge)
+    # Run all edge verifications concurrently — Claude API calls are async I/O
+    # so parallelising them cuts total VTT time from N×latency to ~1×latency.
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+
+    verified_edges = []
+    for res in results:
+        if isinstance(res, Exception):
+            continue  # skip edges that errored rather than crashing the whole pipeline
+        if res is not None:
+            verified_edges.append(res)
 
     graph.edges = verified_edges
     return graph

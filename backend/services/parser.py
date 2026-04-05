@@ -32,25 +32,68 @@ Return a JSON object with EXACTLY this schema:
 }
 
 Rules:
-- Extract EVERY distinct object type mentioned, not just the most prominent.
+- Extract EVERY distinct PHYSICAL OBJECT mentioned, not just the most prominent.
 - For "dog and ball": targets = [dog (primary), ball (related)]
 - For "monkey with banana": targets = [monkey (primary), banana (related)]
 - For "bird on tree": targets = [bird (primary), tree (related)]
 - For "house with car": targets = [house (primary), car (related)]
 - For "blue Honda": targets = [car (primary)] with color=blue, make=Honda
-- Extract relational hints from prepositions and verbs: "with", "on", "holding",
-  "walking", "next to", "carrying", "sitting on" etc.
+
+COMPOSITIONAL QUERIES — when the prompt names a PRIMARY subject together with
+one or more COMPANION objects, ALL companion objects become "related" targets.
+The downstream system will only highlight primary instances that have EVERY
+related class spatially nearby. This means:
+- "man with paddle and umbrella" → man (primary), paddle (related), umbrella (related)
+  Only men who have both a paddle AND an umbrella nearby will be shown.
+- "person holding ball near bench" → person (primary), ball (related), bench (related)
+- "cyclist with helmet and bike" → cyclist (primary), helmet (related), bike (related)
+
+PERSON QUERIES — when the user only asks for people/persons/men/women with NO
+companion objects (only clothing/appearance attributes), produce a SINGLE primary
+target using base_class "person" regardless of the synonym used:
+- "persons"          → [person (primary)]  — shows ALL people in the image
+- "people"           → [person (primary)]  — shows ALL people in the image
+- "men"              → [person (primary)]  — shows ALL men (use "man" as base_class)
+- "show all people"  → [person (primary)]  — shows ALL people in the image
+
+CRITICAL — clothing, colors, and appearance worn BY a person/subject are ATTRIBUTES
+of that subject, NOT separate targets. Never create a target whose base_class is a
+clothing item or body-part description when it is describing the main subject:
+- "person with blue shirt"   → [person (primary)] with other=["wearing blue shirt"]
+- "man in red jacket"        → [man (primary)] with other=["wearing red jacket"]
+- "woman wearing glasses"    → [woman (primary)] with other=["wearing glasses"]
+- "cyclist in yellow vest"   → [cyclist (primary)] with other=["wearing yellow vest"]
+A new target is ONLY created when the second noun is an independent, separately
+detectable physical object (banana, tree, car, ball, paddle, umbrella, etc.).
+
+- Extract relational hints from prepositions and verbs between SEPARATE objects:
+  "with", "on", "holding", "walking", "next to", "carrying", "sitting on" etc.
 - Output ONLY valid JSON.
 
 Examples:
   Input:  "find the monkey holding a banana"
-  Output: {"targets":[{"base_class":"monkey","attributes":{"color":null,"make":null,"type":null,"other":["holding banana"]},"confidence_threshold":0.65,"role":"primary"},{"base_class":"banana","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.50,"role":"related"}],"relational_hints":["holding"]}
+  Output: {"targets":[{"base_class":"monkey","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.65,"role":"primary"},{"base_class":"banana","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.50,"role":"related"}],"relational_hints":["holding"]}
+
+  Input:  "man with paddle and umbrella"
+  Output: {"targets":[{"base_class":"man","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.65,"role":"primary"},{"base_class":"paddle","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.50,"role":"related"},{"base_class":"umbrella","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.50,"role":"related"}],"relational_hints":["with"]}
+
+  Input:  "persons"
+  Output: {"targets":[{"base_class":"person","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.65,"role":"primary"}],"relational_hints":[]}
+
+  Input:  "people"
+  Output: {"targets":[{"base_class":"person","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.65,"role":"primary"}],"relational_hints":[]}
 
   Input:  "find blue Honda cars"
   Output: {"targets":[{"base_class":"car","attributes":{"color":"blue","make":"Honda","type":null,"other":[]},"confidence_threshold":0.70,"role":"primary"}],"relational_hints":[]}
 
   Input:  "find birds on a tree"
   Output: {"targets":[{"base_class":"bird","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.65,"role":"primary"},{"base_class":"tree","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.45,"role":"related"}],"relational_hints":["on"]}
+
+  Input:  "find person with blue shirt"
+  Output: {"targets":[{"base_class":"person","attributes":{"color":null,"make":null,"type":null,"other":["wearing blue shirt"]},"confidence_threshold":0.65,"role":"primary"}],"relational_hints":[]}
+
+  Input:  "find the woman in a red jacket"
+  Output: {"targets":[{"base_class":"woman","attributes":{"color":null,"make":null,"type":null,"other":["wearing red jacket"]},"confidence_threshold":0.65,"role":"primary"}],"relational_hints":[]}
 """
 
 # ── Main parse function ───────────────────────────────────────────────────────

@@ -19,7 +19,7 @@ import numpy as np
 from PIL import Image
 from anthropic import AsyncAnthropic
 
-# ── NEW: graph, sgg, vtt imports ──────────────────────────────────────────────
+from middleware.queue import GpuQueue
 from services.graph import Node, SceneGraph
 from services.sgg   import build_scene_graph, normalize_hints
 from services.vtt   import verify_edges
@@ -38,7 +38,43 @@ CROP_PADDING_PX       = 12
 # IoU threshold for deduplication across same base_class detections
 DEDUP_IOU_THRESHOLD   = 0.70
 
+# Max side length (px) fed into SAM 3. Larger images are downscaled to this
+# before inference and results are mapped back to original coordinates.
+# Lower → faster; raise if small-object recall suffers.
+SAM_INPUT_MAX_SIDE = 1024
+
+# Maximum detections kept per object class after SAM3. Detections are sorted
+# by SAM3 score descending before the cap is applied, so the strongest signals
+# are always kept. Without a cap, busy scenes (e.g. 50 people) would run CLIP
+# 50 times and hold the GPU lock for a very long time.
+MAX_DETECTIONS_PER_CLASS = 20
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _maybe_downscale(
+    image: Image.Image,
+    max_side: int,
+) -> tuple[Image.Image, float, float]:
+    """
+    Proportionally downscales *image* so its longest side is at most *max_side*.
+    Returns (downscaled_image, scale_x, scale_y) where scale factors convert
+    downscaled pixel coordinates back to the original image space.
+    If the image is already small enough, returns (image, 1.0, 1.0).
+    """
+    orig_w, orig_h = image.size
+    if orig_w <= max_side and orig_h <= max_side:
+        return image, 1.0, 1.0
+
+    if orig_w >= orig_h:
+        new_w = max_side
+        new_h = max(1, round(orig_h * max_side / orig_w))
+    else:
+        new_h = max_side
+        new_w = max(1, round(orig_w * max_side / orig_h))
+
+    downscaled = image.resize((new_w, new_h), Image.BILINEAR)
+    return downscaled, orig_w / new_w, orig_h / new_h
+
 
 def _mask_to_uint8_hw(mask) -> np.ndarray:
     """SAM 3 returns masks as torch.BoolTensor (H, W) or numpy; RLE encoder needs uint8 ndarray."""
@@ -74,6 +110,17 @@ def _box_iou(a: dict, b: dict) -> float:
     area_b = (b["x2"] - b["x1"]) * (b["y2"] - b["y1"])
     union  = area_a + area_b - inter
     return inter / union if union > 0 else 0.0
+
+
+def _has_attributes(target: dict) -> bool:
+    """Returns True if the target carries any attribute constraints that require CLIP verification."""
+    attrs = target.get("attributes", {}) or {}
+    return bool(
+        attrs.get("color")
+        or attrs.get("make")
+        or attrs.get("type")
+        or attrs.get("other")
+    )
 
 
 def _dedup_instances(instances: list[dict]) -> list[dict]:
@@ -135,10 +182,16 @@ async def run_vision_pipeline(
     image_pil    = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_w, img_h = image_pil.size
 
+    # Downscale before SAM3 to reduce preprocessing and mask-upsampling cost.
+    # Boxes and masks are mapped back to original coordinates afterwards.
+    sam_pil, _sx, _sy = _maybe_downscale(image_pil, SAM_INPUT_MAX_SIDE)
+
     targets          = parsed_query["targets"]
     relational_hints = parsed_query.get("relational_hints", [])
 
-    # ── Step 1: one SAM pass per distinct base_class ──────────────────────────
+    # ── Steps 1–3: SAM3 detection + CLIP scoring (GPU — serialised) ───────────
+    # The GpuQueue lock is held ONLY for this block. VTT / SGG run afterwards
+    # outside the lock so Claude API calls never block other requests.
 
     class_to_targets: dict[str, list[dict]] = defaultdict(list)
     for tgt in targets:
@@ -147,61 +200,122 @@ async def run_vision_pipeline(
     all_instances: list[dict] = []
     global_id = 0
 
-    for base_class, class_targets in class_to_targets.items():
-        detections = _detect_with_sam3(image_pil, base_class, models)
-        if not detections:
-            continue
-
-        # ── Steps 2–3: score each detection against every target in its class ─
-        for det in detections:
-            box  = det["bounding_box"]
-            mask = det["mask"]
-
-            box_area = (box["x2"] - box["x1"]) * (box["y2"] - box["y1"])
-            if box_area / (img_w * img_h) < MIN_BOX_AREA_FRACTION:
+    async with GpuQueue():
+        for base_class, class_targets in class_to_targets.items():
+            detections = _detect_with_sam3(sam_pil, base_class, models)
+            if not detections:
                 continue
 
-            crop = _crop_instance(image_pil, box, img_w, img_h)
+            # Sort by SAM3 score descending and cap to avoid unbounded CLIP work.
+            detections = sorted(detections, key=lambda d: d["sam_score"], reverse=True)
+            detections = detections[:MAX_DETECTIONS_PER_CLASS]
 
-            best_target: dict | None = None
-            best_score               = -1.0
+            # Targets with no attribute constraints skip CLIP entirely — SAM3's
+            # own score is used directly. Targets with attributes (color, make,
+            # etc.) go through CLIP verification for each detection.
+            any_attrs = any(_has_attributes(t) for t in class_targets)
 
-            for tgt in class_targets:
-                attr_desc   = _build_attribute_description(base_class, tgt["attributes"])
-                clip_score  = _score_with_clip(crop, attr_desc, models)
-                final_score = clip_score
+            # ── Score each detection against every target in its class ─────────
+            for det in detections:
+                # Scale bounding box from SAM input space → original image space
+                raw_box = det["bounding_box"]
+                box = {
+                    "x1": round(raw_box["x1"] * _sx),
+                    "y1": round(raw_box["y1"] * _sy),
+                    "x2": round(raw_box["x2"] * _sx),
+                    "y2": round(raw_box["y2"] * _sy),
+                }
 
-                if (
-                    tgt["attributes"].get("make")
-                    and CLIP_AMBIGUOUS_LOW <= clip_score <= CLIP_AMBIGUOUS_HIGH
-                ):
-                    vqa_match   = await _verify_with_claude_vision(crop, tgt["attributes"], base_class)
-                    final_score = (clip_score + (1.0 if vqa_match else 0.0)) / 2
+                # Scale mask from SAM input space → original image space
+                mask = det["mask"]
+                if _sx != 1.0 or _sy != 1.0:
+                    mask = np.array(
+                        Image.fromarray(mask).resize((img_w, img_h), Image.NEAREST)
+                    )
 
-                if final_score > best_score:
-                    best_score  = final_score
-                    best_target = tgt
+                box_area = (box["x2"] - box["x1"]) * (box["y2"] - box["y1"])
+                if box_area / (img_w * img_h) < MIN_BOX_AREA_FRACTION:
+                    continue
 
-            if best_target is None:
-                continue
+                if not any_attrs:
+                    # Simple detection: no attributes → trust SAM3 directly.
+                    # SAM3 already filtered with its own 0.5 sigmoid threshold,
+                    # so every returned detection is a valid match. The parser's
+                    # confidence_threshold is calibrated for CLIP scores and must
+                    # not be applied here — it would silently drop real detections.
+                    best_target = class_targets[0]
+                    best_score  = det["sam_score"]
+                    all_instances.append({
+                        "id":           str(global_id).zfill(4),
+                        "bounding_box": box,
+                        "mask_rle":     _encode_mask_rle(mask),
+                        "confidence":   round(best_score, 4),
+                        "matched":      True,
+                        "base_class":   base_class,
+                        "role":         best_target["role"],
+                        "target_label": base_class,
+                    })
+                    global_id += 1
+                    continue
 
-            target_label = _build_attribute_description(base_class, best_target["attributes"])
-            all_instances.append({
-                "id":           str(global_id).zfill(4),
-                "bounding_box": box,
-                "mask_rle":     _encode_mask_rle(mask),
-                "confidence":   round(best_score, 4),
-                "matched":      best_score >= best_target["confidence_threshold"],
-                "base_class":   base_class,
-                "role":         best_target["role"],
-                "target_label": target_label,
-            })
-            global_id += 1
+                # Attribute filtering: run CLIP for each attribute variant.
+                crop = _crop_instance(image_pil, box, img_w, img_h)
+
+                best_target: dict | None = None
+                best_score               = -1.0
+
+                for tgt in class_targets:
+                    # Skip CLIP for targets that carry no attributes even when
+                    # sibling targets do — use SAM score as a floor instead.
+                    if not _has_attributes(tgt):
+                        if det["sam_score"] > best_score:
+                            best_score  = det["sam_score"]
+                            best_target = tgt
+                        continue
+
+                    attr_desc   = _build_attribute_description(base_class, tgt["attributes"])
+                    clip_score  = _score_with_clip(crop, attr_desc, models)
+                    final_score = clip_score
+
+                    if (
+                        tgt["attributes"].get("make")
+                        and CLIP_AMBIGUOUS_LOW <= clip_score <= CLIP_AMBIGUOUS_HIGH
+                    ):
+                        vqa_match   = await _verify_with_claude_vision(crop, tgt["attributes"], base_class)
+                        final_score = (clip_score + (1.0 if vqa_match else 0.0)) / 2
+
+                    if final_score > best_score:
+                        best_score  = final_score
+                        best_target = tgt
+
+                if best_target is None:
+                    continue
+
+                all_instances.append({
+                    "id":           str(global_id).zfill(4),
+                    "bounding_box": box,
+                    "mask_rle":     _encode_mask_rle(mask),
+                    "confidence":   round(best_score, 4),
+                    "matched":      best_score >= best_target["confidence_threshold"],
+                    "base_class":   base_class,
+                    "role":         best_target["role"],
+                    "target_label": _make_target_label(base_class, best_target["attributes"]),
+                })
+                global_id += 1
+    # GPU lock released — SGG and VTT run from here without blocking the queue.
 
     # ── Dedup overlapping boxes within the same class ─────────────────────────
     all_instances = _dedup_instances(all_instances)
 
-    # ── Steps 4–6: build scene graph over ALL matched instances ───────────────
+    # ── Steps 4–6: scene graph (only when multi-class or relational hints) ────
+    # For plain single-class queries there are no cross-object edges to build,
+    # so we skip the SGG + VTT pass entirely and return an empty graph.
+    distinct_classes = {inst["base_class"] for inst in all_instances}
+    needs_graph = len(distinct_classes) > 1 or bool(relational_hints)
+
+    if not needs_graph:
+        return all_instances, SceneGraph()
+
     nodes = [
         Node(
             id           = inst["id"],
@@ -373,13 +487,39 @@ async def _verify_with_claude_vision(
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
+def _make_target_label(base_class: str, attributes: dict) -> str:
+    """
+    Short, stable label used as the grouping key shared between vision.py and
+    build_groups_payload() in renderer.py.
+
+    Format: "<color> <make> <type> <base_class>" — only structured fields,
+    no "a" article, no free-text "other" items (those are CLIP-only).
+    Must stay in sync with build_groups_payload().
+    """
+    parts = [
+        v for v in [
+            attributes.get("color"),
+            attributes.get("make"),
+            attributes.get("type"),
+            base_class,
+        ] if v
+    ]
+    return " ".join(parts)
+
+
 def _build_attribute_description(base_class: str, attributes: dict) -> str:
+    """
+    Natural-language description passed to CLIP for similarity scoring.
+    Includes free-text 'other' items (e.g. 'wearing blue shirt') so CLIP
+    can reason about appearance. NOT used as a grouping key.
+    """
     parts = ["a"]
     if attributes.get("color"): parts.append(attributes["color"])
     if attributes.get("make"):  parts.append(attributes["make"])
     if attributes.get("type"):  parts.append(attributes["type"])
     parts.append(base_class)
-    if attributes.get("other"): parts.append(" ".join(attributes["other"]))
+    for item in (attributes.get("other") or []):
+        parts.append(item)
     return " ".join(parts)
 
 

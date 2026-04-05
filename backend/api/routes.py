@@ -1,9 +1,11 @@
+import io
 import time
 import uuid
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
+from PIL import Image
 
 import aiosqlite
 
@@ -11,8 +13,7 @@ from db.database import get_db
 from db.queries import insert_query_log, fetch_query_by_id, fetch_query_history
 from services.parser import parse_prompt
 from services.vision import run_vision_pipeline
-from services.renderer import render_results, build_groups_payload
-from middleware.queue import GpuQueue
+from services.renderer import render_results, build_groups_payload, filter_compositional_instances
 from middleware.limiter import rate_limit
 from middleware.logger import get_logger
 
@@ -102,10 +103,21 @@ async def query(
         )
 
     try:
-        async with GpuQueue():
-            instances, scene_graph = await run_vision_pipeline(
-                image_bytes, parsed_query, models
-            )
+        # GpuQueue is acquired internally by run_vision_pipeline for the
+        # SAM3+CLIP section only. VTT / SGG run outside the GPU lock so
+        # Claude API calls never block other inference requests.
+        instances, scene_graph = await run_vision_pipeline(
+            image_bytes, parsed_query, models
+        )
+
+        # Compositional filtering: for multi-class queries (e.g. "man with
+        # paddle and umbrella"), keep only primary instances that have every
+        # required related class within proximity, plus their companions.
+        # Single-class queries (e.g. "persons") pass through unchanged.
+        _img_pil = Image.open(io.BytesIO(image_bytes))
+        instances = filter_compositional_instances(
+            instances, parsed_query, *_img_pil.size
+        )
 
         matched_count = sum(1 for i in instances if i["matched"])
         edge_count    = len(scene_graph.verified_edges())
@@ -124,8 +136,7 @@ async def query(
     groups = build_groups_payload(parsed_query, instances)
 
     try:
-        # CHANGED: pass scene_graph so render_results can draw edges
-        filename, _ = render_results(image_bytes, groups, RESULTS_DIR, scene_graph)
+        filename, _ = render_results(image_bytes, groups, RESULTS_DIR)
         logger.info(f"[{query_id}] Rendered result image: {filename}")
     except Exception as e:
         logger.error(f"[{query_id}] Renderer failed: {e}", exc_info=True)

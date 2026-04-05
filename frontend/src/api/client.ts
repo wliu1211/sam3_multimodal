@@ -31,8 +31,10 @@ function transformKeys(obj: any): any {
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "/api";
 
 // How long to wait before treating a request as timed out.
-// Inference can take a few seconds, so this is intentionally generous.
-const TIMEOUT_MS = 60_000;
+// SAM3 inference on CPU can take 30-60s; set this well above that.
+// The backend queue will reject after 100s with a clean 503 message,
+// so this 120s ceiling mainly guards against truly hung requests.
+const TIMEOUT_MS = 120_000;
 
 // ── Axios instance ────────────────────────────────────────────────────────────
 

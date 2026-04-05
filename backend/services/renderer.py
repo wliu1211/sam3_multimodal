@@ -4,10 +4,6 @@ import cv2
 import numpy as np
 from PIL import Image
 from pathlib import Path
-from typing import Optional
-
-# ── NEW: SceneGraph import ────────────────────────────────────────────────────
-from services.graph import SceneGraph
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -19,10 +15,10 @@ LABEL_THICKNESS   = 1
 LABEL_PAD         = 5
 LABEL_OFFSET_Y    = 8
 
-# Edge drawing constants
-EDGE_THICKNESS    = 2       # Relationship line thickness
-EDGE_LABEL_SCALE  = 0.38    # Smaller font for edge labels
-EDGE_LABEL_PAD    = 3
+# For compositional queries (e.g. "man with paddle and umbrella"), a related
+# object must be within this fraction of the image diagonal to be considered
+# a companion of a given primary instance.
+COMPOSITIONAL_MAX_DIST_FRACTION = 0.45
 
 GROUP_PALETTE = [
     (74,  222, 128),
@@ -42,21 +38,16 @@ GROUP_PALETTE_HEX = [
     "#34D399", "#FB923C", "#A78BFA", "#F472B6", "#38BDF8",
 ]
 
-# Color used for relationship edge lines — white with alpha blending
-EDGE_COLOR_BGR = (220, 220, 220)
-
 # ── Main entry point ──────────────────────────────────────────────────────────
 
-# CHANGED: added optional scene_graph parameter
 def render_results(
-    image_bytes:  bytes,
-    groups:       list[dict],
-    results_dir:  Path,
-    scene_graph:  Optional[SceneGraph] = None,
+    image_bytes: bytes,
+    groups:      list[dict],
+    results_dir: Path,
 ) -> tuple[str, str]:
     """
-    Draws colored mask overlays, bounding boxes, and (if provided)
-    scene graph relationship edges onto the source image, then saves to disk.
+    Draws colored mask overlays and bounding boxes onto the source image,
+    then saves to disk.
 
     Returns (filename, full_path_str).
     """
@@ -85,10 +76,6 @@ def render_results(
                 instance["confidence"],
                 color_bgr,
             )
-
-    # ── NEW: draw scene graph edges if provided ───────────────────────────────
-    if scene_graph is not None and scene_graph.verified_edges():
-        _draw_edges(output, scene_graph)
 
     filename  = f"{uuid.uuid4().hex}.jpg"
     save_path = results_dir / filename
@@ -136,81 +123,6 @@ def _draw_bounding_box(
     )
 
 
-# ── NEW: edge drawing ─────────────────────────────────────────────────────────
-
-def _draw_edges(image: np.ndarray, scene_graph: SceneGraph) -> None:
-    """
-    Draws a line between the centroids of each verified edge's subject and
-    object, with a predicate label badge at the midpoint.
-
-    Line opacity is scaled by edge confidence — higher confidence edges
-    appear more opaque and therefore more prominent.
-
-    Only draws verified edges to avoid cluttering the image with uncertain
-    relationship proposals.
-    """
-    h, w = image.shape[:2]
-
-    for edge in scene_graph.verified_edges():
-        subject = scene_graph.get_node(edge.subject_id)
-        obj     = scene_graph.get_node(edge.object_id)
-
-        if subject is None or obj is None:
-            continue
-
-        # Centroid coordinates
-        sx, sy = (int(c) for c in subject.centroid)
-        ox, oy = (int(c) for c in obj.centroid)
-
-        # Scale line opacity by confidence
-        alpha      = max(0.3, min(1.0, edge.confidence))
-        line_color = tuple(int(c * alpha) for c in EDGE_COLOR_BGR)
-
-        # Draw the relationship line
-        cv2.line(image, (sx, sy), (ox, oy), line_color, EDGE_THICKNESS, cv2.LINE_AA)
-
-        # Draw small circles at each endpoint to anchor the line visually
-        cv2.circle(image, (sx, sy), 4, line_color, -1, cv2.LINE_AA)
-        cv2.circle(image, (ox, oy), 4, line_color, -1, cv2.LINE_AA)
-
-        # Label badge at midpoint
-        mid_x = (sx + ox) // 2
-        mid_y = (sy + oy) // 2
-
-        # Use arrow symbol if downgraded to show the original was stronger
-        predicate_text = edge.predicate.replace("_", " ")
-        if edge.downgraded and edge.original_predicate:
-            predicate_text = f"~{predicate_text}"
-
-        conf_text  = f"{int(edge.confidence * 100)}%"
-        badge_text = f"{predicate_text} {conf_text}"
-
-        (text_w, text_h), baseline = cv2.getTextSize(
-            badge_text, LABEL_FONT, EDGE_LABEL_SCALE, LABEL_THICKNESS
-        )
-
-        bx1 = max(0,     mid_x - text_w // 2 - EDGE_LABEL_PAD)
-        by1 = max(0,     mid_y - text_h - EDGE_LABEL_PAD * 2)
-        bx2 = min(w - 1, mid_x + text_w // 2 + EDGE_LABEL_PAD)
-        by2 = min(h - 1, mid_y + EDGE_LABEL_PAD)
-
-        # Dark semi-transparent badge background
-        badge_overlay = image.copy()
-        cv2.rectangle(badge_overlay, (bx1, by1), (bx2, by2), (30, 30, 30), -1)
-        cv2.addWeighted(badge_overlay, 0.75, image, 0.25, 0, image)
-
-        cv2.putText(
-            image,
-            badge_text,
-            (bx1 + EDGE_LABEL_PAD, by2 - EDGE_LABEL_PAD - baseline + text_h),
-            LABEL_FONT,
-            EDGE_LABEL_SCALE,
-            (240, 240, 240),
-            LABEL_THICKNESS,
-            cv2.LINE_AA,
-        )
-
-
 # ── Encode / decode ───────────────────────────────────────────────────────────
 
 def _decode_mask_rle(rle: list[int], width: int, height: int) -> np.ndarray:
@@ -250,6 +162,77 @@ def _hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
 
 # ── Group payload builder ─────────────────────────────────────────────────────
 
+def _centroid_dist(box_a: dict, box_b: dict) -> float:
+    """Euclidean pixel distance between the centroids of two bounding boxes."""
+    cx_a = (box_a["x1"] + box_a["x2"]) / 2
+    cy_a = (box_a["y1"] + box_a["y2"]) / 2
+    cx_b = (box_b["x1"] + box_b["x2"]) / 2
+    cy_b = (box_b["y1"] + box_b["y2"]) / 2
+    return ((cx_a - cx_b) ** 2 + (cy_a - cy_b) ** 2) ** 0.5
+
+
+def filter_compositional_instances(
+    instances:    list[dict],
+    parsed_query: dict,
+    img_w:        int,
+    img_h:        int,
+) -> list[dict]:
+    """
+    Compositional set filtering for multi-class queries.
+
+    For a query like "man with paddle and umbrella", a detected man is only
+    kept when at least one paddle AND at least one umbrella fall within
+    COMPOSITIONAL_MAX_DIST_FRACTION of the image diagonal from his centroid.
+    Men with no complete companion set are excluded entirely, along with any
+    related instances (paddles / umbrellas) that are not paired with a valid
+    primary.
+
+    Single-class queries (e.g. "persons", "dogs") have no related targets and
+    pass through unchanged — every detected instance is returned as-is.
+
+    Related instances are not exclusive: if an umbrella is shared between two
+    nearby men who each also have a paddle, both men form valid sets and both
+    will claim that umbrella.
+    """
+    from collections import defaultdict
+
+    targets         = parsed_query["targets"]
+    primary_classes = {t["base_class"] for t in targets if t["role"] == "primary"}
+    related_classes = {t["base_class"] for t in targets if t["role"] == "related"}
+
+    if not related_classes:
+        return instances
+
+    img_diag = (img_w ** 2 + img_h ** 2) ** 0.5
+    max_dist = COMPOSITIONAL_MAX_DIST_FRACTION * img_diag
+
+    matched          = [i for i in instances if i.get("matched")]
+    primaries        = [i for i in matched if i["base_class"] in primary_classes]
+    related_by_class: dict[str, list[dict]] = defaultdict(list)
+    for inst in matched:
+        if inst["base_class"] in related_classes:
+            related_by_class[inst["base_class"]].append(inst)
+
+    valid_ids: set[str] = set()
+
+    for primary in primaries:
+        companions: dict[str, dict] = {}
+        for rel_class in related_classes:
+            pool = related_by_class[rel_class]
+            if not pool:
+                break
+            nearest = min(pool, key=lambda r: _centroid_dist(primary["bounding_box"], r["bounding_box"]))
+            if _centroid_dist(primary["bounding_box"], nearest["bounding_box"]) <= max_dist:
+                companions[rel_class] = nearest
+
+        if all(rc in companions for rc in related_classes):
+            valid_ids.add(primary["id"])
+            for companion in companions.values():
+                valid_ids.add(companion["id"])
+
+    return [inst for inst in instances if inst["id"] in valid_ids]
+
+
 def build_groups_payload(
     parsed_query: dict,
     instances:    list[dict],
@@ -263,7 +246,9 @@ def build_groups_payload(
     """
     targets = parsed_query["targets"]
 
-    # Index matched instances by their target_label for O(1) lookup
+    # Index matched instances by their target_label for O(1) lookup.
+    # target_label format: "<color> <make> <type> <base_class>" — must match
+    # the _make_target_label() function in vision.py exactly.
     label_to_insts: dict[str, list[dict]] = {}
     for inst in instances:
         if inst.get("matched"):
@@ -275,12 +260,20 @@ def build_groups_payload(
         base_class = tgt["base_class"]
         attrs      = tgt["attributes"]
 
+        # Build the same label format as _make_target_label() in vision.py:
+        # structured fields only (color, make, type, base_class) — no "other".
+        structured_parts = [
+            v for v in [attrs.get("color"), attrs.get("make"), attrs.get("type"), base_class]
+            if v
+        ]
+        label = " ".join(structured_parts)
+
+        # Human-readable attribute list shown in the UI (includes other items)
         attr_parts = [
             v for v in [attrs.get("color"), attrs.get("make"), attrs.get("type")]
             if v
-        ] + attrs.get("other", [])
+        ] + list(attrs.get("other") or [])
 
-        label   = " ".join(attr_parts + [base_class]) if attr_parts else base_class
         matched = label_to_insts.get(label, [])
 
         avg_confidence = (
