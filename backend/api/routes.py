@@ -47,12 +47,10 @@ async def query(
       2. Parse prompt → structured JSON via Claude
       3. Detect + segment instances via SAM 3
       4. Verify attributes via CLIP (+ Claude Vision fallback)
-      5. Render mask overlays via OpenCV
-      6. Log result to SQLite
-      7. Return response
-
-    Returns a JSON payload with matched groups, mask data,
-    and the URL of the annotated result image.
+      5. Build scene graph (SGG) + verify edges (VTT)
+      6. Render mask overlays + relationship edges via OpenCV
+      7. Log result to SQLite
+      8. Return response with groups + scene graph
     """
     query_id   = uuid.uuid4().hex
     start_time = time.time()
@@ -83,16 +81,17 @@ async def query(
 
     try:
         parsed_query = await parse_prompt(prompt)
+        primary = next((t for t in parsed_query["targets"] if t["role"] == "primary"), parsed_query["targets"][0])
         logger.info(
-            f"[{query_id}] Parsed: class='{parsed_query['base_class']}' "
-            f"attrs={parsed_query['attributes']} "
-            f"threshold={parsed_query['confidence_threshold']}"
+            f"[{query_id}] Parsed: {len(parsed_query['targets'])} target(s), "
+            f"primary='{primary['base_class']}' "
+            f"hints={parsed_query['relational_hints']}"
         )
     except (ValueError, RuntimeError) as e:
         logger.error(f"[{query_id}] Parser failed: {e}")
         raise HTTPException(status_code=422, detail=f"Prompt parsing failed: {e}")
 
-    # ── 3 & 4. Vision pipeline ────────────────────────────────────────────────
+    # ── 3, 4, 5. Vision pipeline (detection + CLIP + SGG + VTT) ──────────────
 
     models = request.app.state.models
 
@@ -104,59 +103,73 @@ async def query(
 
     try:
         async with GpuQueue():
-            instances = await run_vision_pipeline(image_bytes, parsed_query, models)
+            instances, scene_graph = await run_vision_pipeline(
+                image_bytes, parsed_query, models
+            )
+
+        matched_count = sum(1 for i in instances if i["matched"])
+        edge_count    = len(scene_graph.verified_edges())
         logger.info(
             f"[{query_id}] Vision complete: "
-            f"{len(instances)} instances detected, "
-            f"{sum(1 for i in instances if i['matched'])} matched"
+            f"{len(instances)} detected ({matched_count} matched across "
+            f"{len(parsed_query['targets'])} target(s)), "
+            f"{edge_count} verified edges"
         )
     except Exception as e:
         logger.error(f"[{query_id}] Vision pipeline failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Vision pipeline error: {e}")
 
-    # ── 5. Render ─────────────────────────────────────────────────────────────
+    # ── 6. Render ─────────────────────────────────────────────────────────────
 
     groups = build_groups_payload(parsed_query, instances)
 
     try:
-        filename, _ = render_results(image_bytes, groups, RESULTS_DIR)
+        # CHANGED: pass scene_graph so render_results can draw edges
+        filename, _ = render_results(image_bytes, groups, RESULTS_DIR, scene_graph)
         logger.info(f"[{query_id}] Rendered result image: {filename}")
     except Exception as e:
         logger.error(f"[{query_id}] Renderer failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Rendering error: {e}")
 
-    # ── 6. Log to DB ──────────────────────────────────────────────────────────
+    # ── 7. Log to DB ──────────────────────────────────────────────────────────
 
     inference_ms  = int((time.time() - start_time) * 1000)
     total_matches = sum(g["matchCount"] for g in groups)
 
+    primary_target = next(
+        (t for t in parsed_query["targets"] if t["role"] == "primary"),
+        parsed_query["targets"][0],
+    )
+
     try:
         await insert_query_log(
-            db           = db,
-            id           = query_id,
-            prompt       = prompt,
-            base_class   = parsed_query["base_class"],
-            parsed_attrs = parsed_query["attributes"],
-            match_count  = total_matches,
-            inference_ms = inference_ms,
-            result_image = filename,
+            db            = db,
+            id            = query_id,
+            prompt        = prompt,
+            primary_class = primary_target["base_class"],
+            target_count  = len(parsed_query["targets"]),
+            parsed_query  = parsed_query,
+            match_count   = total_matches,
+            inference_ms  = inference_ms,
+            result_image  = filename,
         )
     except Exception as e:
-        # Non-fatal — log the error but don't fail the response over a DB write
         logger.warning(f"[{query_id}] DB log failed (non-fatal): {e}")
 
-    # ── 7. Response ───────────────────────────────────────────────────────────
+    # ── 8. Response ───────────────────────────────────────────────────────────
 
     logger.info(f"[{query_id}] Done in {inference_ms}ms — {total_matches} matches")
 
     return JSONResponse({
-        "id":                query_id,
-        "prompt":            prompt,
-        "parsed_query":      parsed_query,
-        "groups":            groups,
+        "id":                  query_id,
+        "prompt":              prompt,
+        "parsed_query":        parsed_query,
+        "groups":              groups,
         "annotated_image_url": f"/results/{filename}",
-        "inference_ms":      inference_ms,
-        "created_at":        _utc_now(),
+        "inference_ms":        inference_ms,
+        "created_at":          _utc_now(),
+        # CHANGED: scene graph added to response
+        "scene_graph":         scene_graph.to_dict(),
     })
 
 
@@ -171,8 +184,6 @@ async def get_query(
 ):
     """
     Returns the stored log entry for a previously run query.
-    Used by the frontend history sidebar to reload a past result
-    without re-running inference.
     """
     row = await fetch_query_by_id(db, query_id)
 
@@ -182,7 +193,6 @@ async def get_query(
             detail=f"Query '{query_id}' not found.",
         )
 
-    # Attach the result image URL if one was saved
     if row.get("result_image"):
         row["annotated_image_url"] = f"/results/{row['result_image']}"
 
@@ -201,20 +211,12 @@ async def get_history(
 ):
     """
     Returns a paginated list of past query log entries, newest first.
-    Each entry includes the prompt, match count, inference time,
-    and the result image URL.
-
-    Query params:
-      page      — 1-indexed page number (default 1)
-      page_size — entries per page, max 100 (default 20)
     """
-    # Clamp page_size so no one requests 10,000 rows
     page_size = max(1, min(page_size, 100))
     page      = max(1, page)
 
     data = await fetch_query_history(db, page=page, page_size=page_size)
 
-    # Attach result image URLs to each entry
     for entry in data["entries"]:
         if entry.get("result_image"):
             entry["annotated_image_url"] = f"/results/{entry['result_image']}"

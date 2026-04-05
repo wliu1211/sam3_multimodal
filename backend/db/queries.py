@@ -9,31 +9,34 @@ async def insert_query_log(
     db:            aiosqlite.Connection,
     id:            str,
     prompt:        str,
-    base_class:    str,
-    parsed_attrs:  dict,
+    primary_class: str,
+    target_count:  int,
+    parsed_query:  dict,
     match_count:   int,
     inference_ms:  int,
     result_image:  Optional[str],
 ) -> None:
     """
     Inserts one completed query into the query_log table.
-    Called by the route handler after the full pipeline finishes.
 
-    parsed_attrs is stored as a JSON string since SQLite has no native
-    dict/object type — deserialised back to a dict on read in row_to_dict().
+    primary_class — the base_class of the first "primary" target.
+    target_count  — total number of targets extracted by the parser.
+    parsed_query  — full parsed_query dict (targets + relational_hints),
+                    stored as JSON in the parsed_attrs column.
     """
     await db.execute(
         """
         INSERT INTO query_log
-            (id, prompt, base_class, parsed_attrs,
+            (id, prompt, base_class, target_count, parsed_attrs,
              match_count, inference_ms, result_image, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             id,
             prompt,
-            base_class,
-            json.dumps(parsed_attrs),
+            primary_class,
+            target_count,
+            json.dumps(parsed_query),
             match_count,
             inference_ms,
             result_image,
@@ -102,7 +105,7 @@ async def fetch_query_history(
 def row_to_dict(row: aiosqlite.Row) -> dict:
     """
     Converts an aiosqlite.Row into a plain dict and deserialises
-    the parsed_attrs JSON string back into a Python dict.
+    the parsed_attrs JSON string (full parsed_query) back into a Python dict.
     """
     d = dict(row)
     if d.get("parsed_attrs"):
@@ -110,4 +113,6 @@ def row_to_dict(row: aiosqlite.Row) -> dict:
             d["parsed_attrs"] = json.loads(d["parsed_attrs"])
         except (json.JSONDecodeError, TypeError):
             d["parsed_attrs"] = {}
+    # Ensure target_count has a sensible default for rows written by older code
+    d.setdefault("target_count", 1)
     return d

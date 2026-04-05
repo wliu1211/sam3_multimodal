@@ -1,20 +1,28 @@
 import { useEffect, useRef, useState } from "react";
 import { useCanvasRenderer } from "../hooks/useCanvasRenderer";
-import type { MaskGroup } from "../types/mask";
+// CHANGED: added SceneGraph to the type import
+import type { MaskGroup, SceneGraph } from "../types/mask";
 
+// CHANGED: added optional sceneGraph prop
 interface Props {
   imageUrl: string;
   groups: MaskGroup[];
   isAnnotated: boolean;
+  sceneGraph?: SceneGraph;
 }
 
-export default function ResultCanvas({ imageUrl, groups, isAnnotated }: Props) {
+// CHANGED: destructure sceneGraph from props
+export default function ResultCanvas({ imageUrl, groups, isAnnotated, sceneGraph }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
   const [zoom, setZoom] = useState(1);
   const [showMasks, setShowMasks] = useState(true);
+  // CHANGED: new showEdges state — mirrors showMasks pattern
+  const [showEdges, setShowEdges] = useState(true);
 
-  useCanvasRenderer({ canvasRef, imageUrl, groups, showMasks });
+  // CHANGED: pass edges and showEdges to useCanvasRenderer
+  const verifiedEdges = sceneGraph?.edges.filter((e) => e.verified) ?? [];
+  useCanvasRenderer({ canvasRef, imageUrl, groups, showMasks, edges: verifiedEdges, showEdges });
 
   // Compute natural size on load
   useEffect(() => {
@@ -24,6 +32,7 @@ export default function ResultCanvas({ imageUrl, groups, isAnnotated }: Props) {
   }, [imageUrl]);
 
   const matchCount = groups.reduce((acc, g) => acc + g.matchCount, 0);
+  const edgeCount  = verifiedEdges.length;
 
   return (
     <div className="result-canvas-wrapper">
@@ -43,19 +52,39 @@ export default function ResultCanvas({ imageUrl, groups, isAnnotated }: Props) {
                 {g.matchCount}× {g.label}
               </span>
             ))}
+            {/* CHANGED: edge count badge — only shown when edges exist */}
+            {edgeCount > 0 && (
+              <span className="group-badge" style={{ borderColor: "var(--border)", color: "var(--text-secondary)" }}>
+                {edgeCount} relationship{edgeCount !== 1 ? "s" : ""}
+              </span>
+            )}
           </div>
         )}
 
         <div className="canvas-controls">
           {isAnnotated && (
-            <button
-              className={`mask-toggle ${showMasks ? "mask-toggle--on" : ""}`}
-              onClick={() => setShowMasks((v) => !v)}
-              title={showMasks ? "Hide masks" : "Show masks"}
-            >
-              <EyeIcon open={showMasks} />
-              <span>{showMasks ? "Masks on" : "Masks off"}</span>
-            </button>
+            <>
+              <button
+                className={`mask-toggle ${showMasks ? "mask-toggle--on" : ""}`}
+                onClick={() => setShowMasks((v) => !v)}
+                title={showMasks ? "Hide masks" : "Show masks"}
+              >
+                <EyeIcon open={showMasks} />
+                <span>{showMasks ? "Masks on" : "Masks off"}</span>
+              </button>
+
+              {/* CHANGED: edge toggle button — only rendered when edges exist */}
+              {edgeCount > 0 && (
+                <button
+                  className={`mask-toggle ${showEdges ? "mask-toggle--on" : ""}`}
+                  onClick={() => setShowEdges((v) => !v)}
+                  title={showEdges ? "Hide relationships" : "Show relationships"}
+                >
+                  <EdgeIcon />
+                  <span>{showEdges ? "Edges on" : "Edges off"}</span>
+                </button>
+              )}
+            </>
           )}
 
           <div className="zoom-controls">
@@ -81,7 +110,7 @@ export default function ResultCanvas({ imageUrl, groups, isAnnotated }: Props) {
         </div>
       </div>
 
-      {/* Scrollable canvas area */}
+      {/* Scrollable canvas area — unchanged */}
       <div className="canvas-scroll-area">
         <div
           className="canvas-scaler"
@@ -100,7 +129,7 @@ export default function ResultCanvas({ imageUrl, groups, isAnnotated }: Props) {
         </div>
       </div>
 
-      {/* Size info */}
+      {/* Size info — unchanged */}
       {imageSize && (
         <div className="canvas-info">
           {imageSize.w} × {imageSize.h}px
@@ -110,6 +139,7 @@ export default function ResultCanvas({ imageUrl, groups, isAnnotated }: Props) {
   );
 }
 
+// Unchanged
 function EyeIcon({ open }: { open: boolean }) {
   return (
     <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
@@ -118,6 +148,17 @@ function EyeIcon({ open }: { open: boolean }) {
       {!open && (
         <path d="M2 12L12 2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       )}
+    </svg>
+  );
+}
+
+// NEW: icon for the edge toggle button
+function EdgeIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+      <circle cx="3" cy="7" r="2" stroke="currentColor" strokeWidth="1.2" />
+      <circle cx="11" cy="7" r="2" stroke="currentColor" strokeWidth="1.2" />
+      <line x1="5" y1="7" x2="9" y2="7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
     </svg>
   );
 }

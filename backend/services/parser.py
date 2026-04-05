@@ -9,48 +9,48 @@ _client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 # ── System prompt ─────────────────────────────────────────────────────────────
 
 PARSER_SYSTEM_PROMPT = """
-You are a vision query parser. Your only job is to extract structured search
-parameters from a natural language object detection prompt.
+You are a vision query parser. Extract ALL target concepts from the prompt.
 
-Given a user's description, return a JSON object with EXACTLY this schema:
+Return a JSON object with EXACTLY this schema:
 {
-  "base_class": string,        // The general object category to detect.
-                               // Must be a simple noun: "car", "person", "dog".
-                               // Never a compound phrase.
-  "attributes": {
-    "color":  string | null,   // Dominant color if mentioned, else null.
-    "make":   string | null,   // Brand or manufacturer if mentioned, else null.
-    "type":   string | null,   // Sub-type (sedan, SUV, retriever...), else null.
-    "other":  array of string  // Any other visual attributes mentioned.
-                               // Empty array [] if none.
-  },
-  "confidence_threshold": float  // How strict matching should be.
-                                 // Use 0.70 for very specific prompts
-                                 // (e.g. "blue Honda Civic").
-                                 // Use 0.55 for vague prompts
-                                 // (e.g. "big dogs").
-                                 // Default 0.65.
+  "targets": [
+    {
+      "base_class": string,      // simple noun: "dog", "ball", "bird", "house"
+      "attributes": {
+        "color":  string | null,
+        "make":   string | null,
+        "type":   string | null,
+        "other":  array of string
+      },
+      "confidence_threshold": float,
+      "role": string             // "primary" | "related"
+                                 // primary = what the user mainly wants highlighted
+                                 // related = context objects for relationship edges
+    }
+  ],
+  "relational_hints": array of string  // e.g. ["holding", "on", "near", "with"]
 }
 
 Rules:
-- Output ONLY valid JSON. No explanation, no markdown, no code fences.
-- base_class must always be a single general noun.
-- If the prompt mentions multiple object types, use the most prominent one.
-- Normalise colors to lowercase single words: "blue", "red", "dark green".
-- Normalise make/brand names to their standard form: "Honda", "Toyota", "Nike".
+- Extract EVERY distinct object type mentioned, not just the most prominent.
+- For "dog and ball": targets = [dog (primary), ball (related)]
+- For "monkey with banana": targets = [monkey (primary), banana (related)]
+- For "bird on tree": targets = [bird (primary), tree (related)]
+- For "house with car": targets = [house (primary), car (related)]
+- For "blue Honda": targets = [car (primary)] with color=blue, make=Honda
+- Extract relational hints from prepositions and verbs: "with", "on", "holding",
+  "walking", "next to", "carrying", "sitting on" etc.
+- Output ONLY valid JSON.
 
 Examples:
-  Input:  "find cars that are blue and a Honda"
-  Output: {"base_class":"car","attributes":{"color":"blue","make":"Honda","type":null,"other":[]},"confidence_threshold":0.70}
+  Input:  "find the monkey holding a banana"
+  Output: {"targets":[{"base_class":"monkey","attributes":{"color":null,"make":null,"type":null,"other":["holding banana"]},"confidence_threshold":0.65,"role":"primary"},{"base_class":"banana","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.50,"role":"related"}],"relational_hints":["holding"]}
 
-  Input:  "show me people wearing red jackets"
-  Output: {"base_class":"person","attributes":{"color":"red","make":null,"type":null,"other":["wearing jacket"]},"confidence_threshold":0.65}
+  Input:  "find blue Honda cars"
+  Output: {"targets":[{"base_class":"car","attributes":{"color":"blue","make":"Honda","type":null,"other":[]},"confidence_threshold":0.70,"role":"primary"}],"relational_hints":[]}
 
-  Input:  "find large brown dogs"
-  Output: {"base_class":"dog","attributes":{"color":"brown","make":null,"type":null,"other":["large"]},"confidence_threshold":0.60}
-
-  Input:  "find stop signs"
-  Output: {"base_class":"stop sign","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.65}
+  Input:  "find birds on a tree"
+  Output: {"targets":[{"base_class":"bird","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.65,"role":"primary"},{"base_class":"tree","attributes":{"color":null,"make":null,"type":null,"other":[]},"confidence_threshold":0.45,"role":"related"}],"relational_hints":["on"]}
 """
 
 # ── Main parse function ───────────────────────────────────────────────────────
@@ -64,14 +64,21 @@ async def parse_prompt(prompt: str) -> dict:
 
     Returns a dict matching this shape:
     {
-        "base_class": "car",
-        "attributes": {
-            "color": "blue",
-            "make":  "Honda",
-            "type":  None,
-            "other": []
-        },
-        "confidence_threshold": 0.70
+        "targets": [
+            {
+                "base_class":           "monkey",
+                "attributes":           {"color": None, "make": None, "type": None, "other": ["holding banana"]},
+                "confidence_threshold": 0.65,
+                "role":                 "primary",
+            },
+            {
+                "base_class":           "banana",
+                "attributes":           {"color": None, "make": None, "type": None, "other": []},
+                "confidence_threshold": 0.50,
+                "role":                 "related",
+            },
+        ],
+        "relational_hints": ["holding"],
     }
     """
     if not os.getenv("ANTHROPIC_API_KEY"):
@@ -89,11 +96,11 @@ async def parse_prompt(prompt: str) -> dict:
 async def _call_claude(prompt: str) -> str:
     """
     Calls claude-sonnet-4-6 with the parser system prompt.
-    Low max_tokens since output is always a small JSON object.
+    max_tokens raised to 512 — multi-target queries produce larger JSON.
     """
     response = await _client.messages.create(
         model="claude-sonnet-4-6",
-        max_tokens=256,
+        max_tokens=512,
         system=PARSER_SYSTEM_PROMPT,
         messages=[
             {"role": "user", "content": prompt}
@@ -106,11 +113,10 @@ async def _call_claude(prompt: str) -> str:
 
 def _validate_and_normalise(raw_json: str, original_prompt: str) -> dict:
     """
-    Parses Claude's raw string output and validates the schema.
+    Parses Claude's raw string output and validates the multi-target schema.
     Fills in safe defaults for any missing fields so the rest of the
     pipeline never has to handle KeyErrors.
     """
-    # Strip any accidental markdown fences just in case
     cleaned = raw_json.strip()
     if cleaned.startswith("```"):
         cleaned = "\n".join(cleaned.split("\n")[1:])
@@ -126,25 +132,62 @@ def _validate_and_normalise(raw_json: str, original_prompt: str) -> dict:
             f"Raw output was: {raw_json}"
         )
 
-    base_class = str(data.get("base_class", "object")).strip().lower()
-    if not base_class:
-        base_class = "object"
+    raw_targets = data.get("targets", [])
 
-    raw_attrs = data.get("attributes", {})
-    attributes = {
-        "color": _str_or_none(raw_attrs.get("color")),
-        "make":  _str_or_none(raw_attrs.get("make")),
-        "type":  _str_or_none(raw_attrs.get("type")),
-        "other": [str(o) for o in raw_attrs.get("other", []) if o],
-    }
+    # Graceful fallback: if the model returned the old single-target shape, wrap it.
+    if not raw_targets and "base_class" in data:
+        raw_targets = [{
+            "base_class":           data.get("base_class", "object"),
+            "attributes":           data.get("attributes", {}),
+            "confidence_threshold": data.get("confidence_threshold", 0.65),
+            "role":                 "primary",
+        }]
 
-    threshold = float(data.get("confidence_threshold", 0.65))
-    threshold = max(0.30, min(0.95, threshold))
+    if not raw_targets:
+        raw_targets = [{"base_class": "object", "attributes": {}, "confidence_threshold": 0.65, "role": "primary"}]
+
+    targets: list[dict] = []
+    seen_primary = False
+    for t in raw_targets:
+        base_class = str(t.get("base_class", "object")).strip().lower() or "object"
+
+        raw_attrs = t.get("attributes", {}) or {}
+        attributes = {
+            "color": _str_or_none(raw_attrs.get("color")),
+            "make":  _str_or_none(raw_attrs.get("make")),
+            "type":  _str_or_none(raw_attrs.get("type")),
+            "other": [str(o) for o in (raw_attrs.get("other") or []) if o],
+        }
+
+        threshold = float(t.get("confidence_threshold") or 0.65)
+        threshold = max(0.30, min(0.95, threshold))
+
+        role = str(t.get("role") or "primary").lower()
+        if role not in ("primary", "related"):
+            role = "primary"
+        # Ensure at least one primary target
+        if role == "primary":
+            seen_primary = True
+
+        targets.append({
+            "base_class":           base_class,
+            "attributes":           attributes,
+            "confidence_threshold": threshold,
+            "role":                 role,
+        })
+
+    if not seen_primary and targets:
+        targets[0]["role"] = "primary"
+
+    relational_hints = [
+        str(h).lower().strip()
+        for h in (data.get("relational_hints") or [])
+        if h
+    ]
 
     return {
-        "base_class":           base_class,
-        "attributes":           attributes,
-        "confidence_threshold": threshold,
+        "targets":          targets,
+        "relational_hints": relational_hints,
     }
 
 

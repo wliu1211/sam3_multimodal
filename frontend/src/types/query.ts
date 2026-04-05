@@ -1,4 +1,4 @@
-import type { MaskGroup } from "./mask";
+import type { MaskGroup, SceneGraph } from "./mask";
 
 // ── Outgoing request ──────────────────────────────────────────────────────────
 
@@ -8,16 +8,28 @@ export interface QueryRequest {
   prompt: string;
 }
 
-// What the LLM parser extracts from the raw prompt — mirrors backend parser.py
+// ── Parsed query types — mirrors backend parser.py ────────────────────────────
+
+// Attributes for one target concept extracted from the user's prompt
+export interface ParsedTargetAttributes {
+  color: string | null;
+  make: string | null;         // Brand / manufacturer
+  type: string | null;         // Sub-type: sedan, SUV, retriever…
+  other: string[];
+}
+
+// A single target concept (object class + attributes + role)
+export interface ParsedTarget {
+  baseClass: string;                    // e.g. "monkey", "banana", "car"
+  attributes: ParsedTargetAttributes;
+  confidenceThreshold: number;          // Per-target CLIP threshold
+  role: "primary" | "related";         // primary = user's focus; related = context
+}
+
+// Full parsed query — one entry per object type mentioned in the prompt
 export interface ParsedQuery {
-  baseClass: string;           // e.g. "car"
-  attributes: {
-    color: string | null;
-    make: string | null;       // Brand / manufacturer
-    type: string | null;       // sedan, SUV, etc.
-    other: string[];
-  };
-  confidenceThreshold: number; // Default 0.65
+  targets: ParsedTarget[];
+  relationalHints: string[];           // e.g. ["holding", "on_top_of"]
 }
 
 // ── Incoming response ─────────────────────────────────────────────────────────
@@ -25,11 +37,12 @@ export interface ParsedQuery {
 export interface QueryResponse {
   id: string;                  // UUID — used to fetch result image
   prompt: string;              // Echo of the original prompt
-  parsedQuery: ParsedQuery;    // What the LLM extracted
-  groups: MaskGroup[];         // One entry per matched attribute group
+  parsedQuery: ParsedQuery;    // What the LLM extracted (multi-target)
+  groups: MaskGroup[];         // One entry per target (primary + related)
   annotatedImageUrl: string;   // URL to the rendered overlay image
   inferenceMs: number;         // Total server-side inference time
   createdAt: string;           // ISO timestamp
+  sceneGraph: SceneGraph;      // Nodes + verified cross-class edges
 }
 
 // ── UI state ──────────────────────────────────────────────────────────────────

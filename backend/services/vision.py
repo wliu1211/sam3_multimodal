@@ -1,13 +1,13 @@
 """
 backend/services/vision.py
 
-SAM 3 detection + CLIP attribute verification.
+SAM 3 detection + CLIP attribute verification + SGG + VTT.
 
 SAM 3 API reference:
   from sam3.model_builder import build_sam3_image_model
   from sam3.model.sam3_image_processor import Sam3Processor
 
-  processor.set_image(image)          → sets image features
+  processor.set_image(image)             → sets image features
   processor.set_text_prompt(text, state) → returns state with masks/boxes/scores
 """
 
@@ -18,6 +18,11 @@ import torch
 import numpy as np
 from PIL import Image
 from anthropic import AsyncAnthropic
+
+# ── NEW: graph, sgg, vtt imports ──────────────────────────────────────────────
+from services.graph import Node, SceneGraph
+from services.sgg   import build_scene_graph, normalize_hints
+from services.vtt   import verify_edges
 
 # ── Client ────────────────────────────────────────────────────────────────────
 
@@ -30,8 +35,10 @@ CLIP_AMBIGUOUS_HIGH   = 0.70
 MIN_BOX_AREA_FRACTION = 0.001
 CROP_PADDING_PX       = 12
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+# IoU threshold for deduplication across same base_class detections
+DEDUP_IOU_THRESHOLD   = 0.70
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _mask_to_uint8_hw(mask) -> np.ndarray:
     """SAM 3 returns masks as torch.BoolTensor (H, W) or numpy; RLE encoder needs uint8 ndarray."""
@@ -53,68 +60,182 @@ def _box_to_int_xyxy(box) -> tuple[int, int, int, int]:
     return tuple(int(v) for v in box)
 
 
+# ── Box IoU helper (for dedup) ────────────────────────────────────────────────
+
+def _box_iou(a: dict, b: dict) -> float:
+    ix1 = max(a["x1"], b["x1"])
+    iy1 = max(a["y1"], b["y1"])
+    ix2 = min(a["x2"], b["x2"])
+    iy2 = min(a["y2"], b["y2"])
+    if ix2 <= ix1 or iy2 <= iy1:
+        return 0.0
+    inter  = (ix2 - ix1) * (iy2 - iy1)
+    area_a = (a["x2"] - a["x1"]) * (a["y2"] - a["y1"])
+    area_b = (b["x2"] - b["x1"]) * (b["y2"] - b["y1"])
+    union  = area_a + area_b - inter
+    return inter / union if union > 0 else 0.0
+
+
+def _dedup_instances(instances: list[dict]) -> list[dict]:
+    """
+    Within each base_class group, removes lower-confidence duplicates
+    when two bounding boxes overlap above DEDUP_IOU_THRESHOLD.
+    """
+    from collections import defaultdict
+    by_class: dict[str, list[dict]] = defaultdict(list)
+    for inst in instances:
+        by_class[inst["base_class"]].append(inst)
+
+    deduped: list[dict] = []
+    for class_insts in by_class.values():
+        sorted_insts = sorted(class_insts, key=lambda x: x["confidence"], reverse=True)
+        kept: list[dict] = []
+        for inst in sorted_insts:
+            if not any(_box_iou(inst["bounding_box"], k["bounding_box"]) > DEDUP_IOU_THRESHOLD for k in kept):
+                kept.append(inst)
+        deduped.extend(kept)
+    return deduped
+
+
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 async def run_vision_pipeline(
     image_bytes:  bytes,
     parsed_query: dict,
     models:       dict,
-) -> list[dict]:
+) -> tuple[list[dict], SceneGraph]:
     """
-    Full vision pipeline. Returns a list of instance dicts.
+    Full multi-target vision pipeline. Returns (instances, scene_graph).
 
-    Each instance:
+    parsed_query shape (from parser.py):
+    {
+        "targets": [
+            {"base_class": str, "attributes": dict, "confidence_threshold": float, "role": str},
+            ...
+        ],
+        "relational_hints": list[str],
+    }
+
+    instances — list of instance dicts:
     {
         "id":           str,
         "bounding_box": {x1, y1, x2, y2},
         "mask_rle":     list[int],
         "confidence":   float,
         "matched":      bool,
+        "base_class":   str,
+        "role":         str,          # "primary" | "related"
+        "target_label": str,          # human-readable attribute description
     }
+
+    scene_graph — SceneGraph with nodes + verified cross-class edges.
     """
+    from collections import defaultdict
+
     image_pil    = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_w, img_h = image_pil.size
 
-    base_class   = parsed_query["base_class"]
-    attributes   = parsed_query["attributes"]
-    threshold    = parsed_query["confidence_threshold"]
-    attr_desc    = _build_attribute_description(base_class, attributes)
+    targets          = parsed_query["targets"]
+    relational_hints = parsed_query.get("relational_hints", [])
 
-    # Step 1 — SAM 3 text-prompted detection
-    detections = _detect_with_sam3(image_pil, base_class, models)
-    if not detections:
-        return []
+    # ── Step 1: one SAM pass per distinct base_class ──────────────────────────
 
-    # Steps 2–3 — CLIP scoring + optional Claude Vision fallback
-    results = []
-    for i, det in enumerate(detections):
-        box  = det["bounding_box"]
-        mask = det["mask"]
+    class_to_targets: dict[str, list[dict]] = defaultdict(list)
+    for tgt in targets:
+        class_to_targets[tgt["base_class"]].append(tgt)
 
-        box_area = (box["x2"] - box["x1"]) * (box["y2"] - box["y1"])
-        if box_area / (img_w * img_h) < MIN_BOX_AREA_FRACTION:
+    all_instances: list[dict] = []
+    global_id = 0
+
+    for base_class, class_targets in class_to_targets.items():
+        detections = _detect_with_sam3(image_pil, base_class, models)
+        if not detections:
             continue
 
-        crop       = _crop_instance(image_pil, box, img_w, img_h)
-        clip_score = _score_with_clip(crop, attr_desc, models)
+        # ── Steps 2–3: score each detection against every target in its class ─
+        for det in detections:
+            box  = det["bounding_box"]
+            mask = det["mask"]
 
-        final_score = clip_score
-        if (
-            attributes.get("make")
-            and CLIP_AMBIGUOUS_LOW <= clip_score <= CLIP_AMBIGUOUS_HIGH
-        ):
-            vqa_match   = await _verify_with_claude_vision(crop, attributes, base_class)
-            final_score = (clip_score + (1.0 if vqa_match else 0.0)) / 2
+            box_area = (box["x2"] - box["x1"]) * (box["y2"] - box["y1"])
+            if box_area / (img_w * img_h) < MIN_BOX_AREA_FRACTION:
+                continue
 
-        results.append({
-            "id":           str(i).zfill(4),
-            "bounding_box": box,
-            "mask_rle":     _encode_mask_rle(mask),
-            "confidence":   round(final_score, 4),
-            "matched":      final_score >= threshold,
-        })
+            crop = _crop_instance(image_pil, box, img_w, img_h)
 
-    return results
+            best_target: dict | None = None
+            best_score               = -1.0
+
+            for tgt in class_targets:
+                attr_desc   = _build_attribute_description(base_class, tgt["attributes"])
+                clip_score  = _score_with_clip(crop, attr_desc, models)
+                final_score = clip_score
+
+                if (
+                    tgt["attributes"].get("make")
+                    and CLIP_AMBIGUOUS_LOW <= clip_score <= CLIP_AMBIGUOUS_HIGH
+                ):
+                    vqa_match   = await _verify_with_claude_vision(crop, tgt["attributes"], base_class)
+                    final_score = (clip_score + (1.0 if vqa_match else 0.0)) / 2
+
+                if final_score > best_score:
+                    best_score  = final_score
+                    best_target = tgt
+
+            if best_target is None:
+                continue
+
+            target_label = _build_attribute_description(base_class, best_target["attributes"])
+            all_instances.append({
+                "id":           str(global_id).zfill(4),
+                "bounding_box": box,
+                "mask_rle":     _encode_mask_rle(mask),
+                "confidence":   round(best_score, 4),
+                "matched":      best_score >= best_target["confidence_threshold"],
+                "base_class":   base_class,
+                "role":         best_target["role"],
+                "target_label": target_label,
+            })
+            global_id += 1
+
+    # ── Dedup overlapping boxes within the same class ─────────────────────────
+    all_instances = _dedup_instances(all_instances)
+
+    # ── Steps 4–6: build scene graph over ALL matched instances ───────────────
+    nodes = [
+        Node(
+            id           = inst["id"],
+            label        = inst["base_class"],
+            bounding_box = inst["bounding_box"],
+            mask_rle     = inst["mask_rle"],
+            confidence   = inst["confidence"],
+            is_attribute = False,
+            role         = inst["role"],
+        )
+        for inst in all_instances
+        if inst.get("matched")
+    ]
+
+    if not nodes:
+        return all_instances, SceneGraph()
+
+    normalized_hints = normalize_hints(relational_hints)
+
+    graph = build_scene_graph(
+        nodes     = nodes,
+        img_w     = img_w,
+        img_h     = img_h,
+        rel_hints = normalized_hints or None,
+    )
+
+    graph = await verify_edges(
+        graph     = graph,
+        image_pil = image_pil,
+        img_w     = img_w,
+        img_h     = img_h,
+    )
+
+    return all_instances, graph
 
 
 # ── SAM 3 detection ───────────────────────────────────────────────────────────
@@ -127,29 +248,21 @@ def _detect_with_sam3(
     """
     Runs SAM 3 text-prompted segmentation on the image.
 
-    SAM 3 API:
-      state = processor.set_image(image_pil)
-      state = processor.set_text_prompt(text, state)
-
-      state["masks"]  → (N, H, W) bool torch.Tensor or numpy
-      state["boxes"]  → (N, 4)    [x1, y1, x2, y2] tensor or array
-      state["scores"] → (N,)      confidence scores
-
-    Returns list of {bounding_box, mask} dicts.
+    state["masks"]  → (N, H, W) bool torch.Tensor or numpy
+    state["boxes"]  → (N, 4)    [x1, y1, x2, y2] tensor or array
+    state["scores"] → (N,)      confidence scores
     """
     processor = models.get("sam3")
     if processor is None:
         raise RuntimeError("SAM 3 model is not loaded. Check startup logs.")
 
-    # Set image — encodes visual features (expensive, done once per image)
-    # Text prompt — finds all instances of base_class
     with torch.inference_mode():
         state = processor.set_image(image_pil)
         state = processor.set_text_prompt(base_class, state)
 
-    masks  = state.get("masks")   # (N, H, W) bool numpy array
-    boxes  = state.get("boxes")   # (N, 4) array
-    scores = state.get("scores")  # (N,) array
+    masks  = state.get("masks")
+    boxes  = state.get("boxes")
+    scores = state.get("scores")
 
     if masks is None or boxes is None or scores is None:
         return []
@@ -160,14 +273,11 @@ def _detect_with_sam3(
 
     detections = []
     for i in range(n):
-        mask = masks[i]
-        box = boxes[i]
-        score = scores[i]
-        x1, y1, x2, y2 = _box_to_int_xyxy(box)
+        x1, y1, x2, y2 = _box_to_int_xyxy(boxes[i])
         detections.append({
             "bounding_box": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
-            "mask":         _mask_to_uint8_hw(mask),
-            "sam_score":    _to_float_scalar(score),
+            "mask":         _mask_to_uint8_hw(masks[i]),
+            "sam_score":    _to_float_scalar(scores[i]),
         })
 
     return detections

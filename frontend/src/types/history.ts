@@ -2,7 +2,8 @@
 export interface QueryLogEntry {
     id: string;
     prompt: string;
-    baseClass: string;
+    baseClass: string;        // Primary target's base class (kept for API compat)
+    targetCount: number;      // Total number of parsed targets
     matchCount: number;
     inferenceMs: number;
     resultImageUrl: string | null;  // null if rendering failed
