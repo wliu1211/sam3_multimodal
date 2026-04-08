@@ -53,7 +53,7 @@ AMBIGUOUS_HIGH = 0.70
 # Maximum number of edges sent to VTT. Edges are sorted by SGG confidence
 # descending before the cap; the weakest proposals are dropped first.
 # Without a cap, a scene with N objects can produce O(N²) edges.
-MAX_VTT_EDGES = 12
+MAX_VTT_EDGES = 40
 
 # Predicate downgrade chains — key → next predicate if check fails.
 DOWNGRADE_CHAIN: dict[str, str | None] = {
@@ -74,7 +74,7 @@ _GEO_RULES: dict[str, dict] = {
     "on_top_of":      {"min_above": 0.20, "min_horiz_overlap": 0.05},
     "sitting_on":     {"min_above": 0.10, "min_horiz_overlap": 0.02},
     "standing_on":    {"max_base_gap_fraction": 0.08},
-    "holding":        {"max_norm_dist": 0.28, "min_size_ratio": 2.5},
+    "holding":        {"max_norm_dist": 0.18, "min_size_ratio": 2.5},
     "wearing":        {"min_iou": 0.08,  "min_size_ratio": 2.0},
     "carrying":       {"max_norm_dist": 0.18, "min_size_ratio": 2.0},
     "playing_with":   {"max_norm_dist": 0.28},
@@ -137,8 +137,44 @@ async def verify_edges(
         if res is not None:
             verified_edges.append(res)
 
-    graph.edges = verified_edges
+    # One-to-one assignment: for strong predicates (holding, wearing, etc.),
+    # each related object should connect to at most one primary subject.
+    # Keeps the highest-confidence edge per (predicate, object_id) pair so that
+    # a single racket cannot link to many people simultaneously.
+    graph.edges = _enforce_one_to_one(verified_edges)
     return graph
+
+
+# ── One-to-one edge assignment ────────────────────────────────────────────────
+# Predicates where a related object can only belong to ONE primary subject.
+# These are grabbing/contact predicates where a small object (racket, ball,
+# shirt) is physically controlled by a single person at a time.
+#
+# Surface predicates (sitting_on, standing_on, on_top_of) are intentionally
+# excluded: a surface (sand, bench, table) can support many subjects
+# simultaneously, so one-to-one assignment would wrongly collapse them to 1.
+_ONE_TO_ONE_PREDICATES: frozenset[str] = frozenset({
+    "holding", "carrying", "wearing", "playing_with",
+})
+def _enforce_one_to_one(edges: list[Edge]) -> list[Edge]:
+    """
+    For each (predicate, object_id) pair where the predicate is a strong
+    exclusive relationship, keep only the highest-confidence edge.
+    This prevents a single related object (e.g. one racket) from connecting
+    to many primary subjects (e.g. 10 people) when only one person is truly
+    holding it. Symmetric predicates (near, walking, parked_next_to) are
+    left unchanged since they are not inherently exclusive.
+    """
+    best: dict[tuple[str, str], Edge] = {}
+    non_exclusive: list[Edge] = []
+    for edge in edges:
+        if edge.predicate in _ONE_TO_ONE_PREDICATES:
+            key = (edge.predicate, edge.object_id)
+            if key not in best or edge.confidence > best[key].confidence:
+                best[key] = edge
+        else:
+            non_exclusive.append(edge)
+    return list(best.values()) + non_exclusive
 
 
 # ── Attribute containment check ───────────────────────────────────────────────

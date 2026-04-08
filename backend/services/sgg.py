@@ -164,7 +164,17 @@ def build_scene_graph(
     # Only propose edges between base-class nodes
     base_nodes = [n for n in nodes if not n.is_attribute]
 
-    for node_a, node_b in combinations(base_nodes, 2):
+    # For multi-class queries (primary + related roles present), only generate
+    # edges between a primary node and a related node. This prevents spurious
+    # cross-primary or cross-related pairs (e.g. person↔person edges when the
+    # user asked for "person holding racket").
+    primary_nodes = [n for n in base_nodes if n.role == "primary"]
+    related_nodes = [n for n in base_nodes if n.role == "related"]
+    if primary_nodes and related_nodes:
+        candidate_pairs = [(p, r) for p in primary_nodes for r in related_nodes]
+    else:
+        candidate_pairs = list(combinations(base_nodes, 2))
+    for node_a, node_b in candidate_pairs:
         # ── Distance pruning ──────────────────────────────────────────────────
         dist = node_a.distance_to(node_b)
         if dist > MAX_DISTANCE_FRACTION * img_diag:
@@ -257,9 +267,9 @@ def _score_predicates(
 
     # ── holding ────────────────────────────────────────────────────────────
     # animate subject, much larger than object, within arm's-length proximity.
-    # 0.28 norm_dist allows rackets / paddles held at arm's length to qualify
-    # (vs the old 0.20 which missed extended-arm poses).
-    if a_animate and size_ratio > SIZE_RATIO_LARGE and norm_dist < 0.28:
+    # 0.18 norm_dist: tight enough to exclude background people while still
+    # covering extended-arm poses (rackets, paddles held at full reach).
+    if a_animate and size_ratio > SIZE_RATIO_LARGE and norm_dist < 0.18:
         score = _clamp(0.4 + (1 - norm_dist) * 0.4 + min(size_ratio / 10, 0.2))
         scores["holding"] = score
 

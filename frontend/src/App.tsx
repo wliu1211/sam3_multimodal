@@ -76,7 +76,7 @@ export default function App() {
           {result && (
             <section className="panel-section">
               <label className="section-label">Matched groups</label>
-              <ColorLegend groups={result.groups} />
+              <ColorLegend groups={result.groups} sceneGraph={result.sceneGraph} />
             </section>
           )}
 
@@ -109,9 +109,11 @@ export default function App() {
 
           {(imagePreviewUrl || result) && !loading && (
             <ResultCanvas
-              imageUrl={result ? result.annotatedImageUrl : imagePreviewUrl!}
+              imageUrl={imagePreviewUrl!}
               groups={result?.groups ?? []}
               isAnnotated={!!result}
+              sceneGraph={result?.sceneGraph}
+              relationalHints={result?.parsedQuery.relationalHints}
             />
           )}
         </main>

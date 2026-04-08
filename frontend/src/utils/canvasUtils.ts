@@ -1,6 +1,20 @@
 // CHANGED: added Edge to the import
-import type { MaskGroup, DecodedMask, BoundingBox, Edge } from "../types/mask";
+import type { MaskGroup, DecodedMask, BoundingBox, Edge, SceneGraphNode } from "../types/mask";
 import { hexToRgba, darkenHex } from "./colorUtils";
+
+// Per-edge-pair color palette — intentionally different from the group palette
+// so relation masks are visually distinct from normal class-colored masks.
+const RELATION_PALETTE = [
+  "#60A5FA", // blue
+  "#F59E0B", // amber
+  "#10B981", // emerald
+  "#EC4899", // pink
+  "#8B5CF6", // violet
+  "#F97316", // orange
+  "#06B6D4", // cyan
+  "#84CC16", // lime
+];
+
 
 const MASK_ALPHA       = 0.45;
 const BORDER_ALPHA     = 0.9;
@@ -191,6 +205,50 @@ export function drawEdges(
   }
 }
 
+
+// ── drawRelationMasks ─────────────────────────────────────────────────────────
+/**
+ * Relation-mask mode: for each verified edge, paints the subject AND object
+ * masks with the same per-pair color so the two objects read as one visual
+ * unit. Each edge pair gets a distinct color from RELATION_PALETTE.
+ *
+ * Only the objects involved in edges are highlighted — other detected objects
+ * are intentionally left un-masked so the relationship pairs stand out clearly.
+ */
+export function drawRelationMasks(
+  ctx:    CanvasRenderingContext2D,
+  canvas: HTMLCanvasElement,
+  nodes:  SceneGraphNode[],
+  edges:  Edge[],
+): void {
+  if (edges.length === 0 || nodes.length === 0) return;
+  const nodeMap = new Map<string, SceneGraphNode>();
+  for (const node of nodes) nodeMap.set(node.id, node);
+  // Paint all mask fills in one ImageData pass
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  edges.forEach((edge, i) => {
+    const color   = RELATION_PALETTE[i % RELATION_PALETTE.length];
+    const subject = nodeMap.get(edge.subjectId);
+    const obj     = nodeMap.get(edge.objectId);
+    if (subject) {
+      paintMask(imageData, decodeRleMask(subject.maskRle, canvas.width, canvas.height), color);
+    }
+    if (obj) {
+      paintMask(imageData, decodeRleMask(obj.maskRle, canvas.width, canvas.height), color);
+    }
+  });
+  ctx.putImageData(imageData, 0, 0);
+  // Draw bounding boxes with the matching per-pair color
+  edges.forEach((edge, i) => {
+    const color   = RELATION_PALETTE[i % RELATION_PALETTE.length];
+    const subject = nodeMap.get(edge.subjectId);
+    const obj     = nodeMap.get(edge.objectId);
+    if (subject) drawBoundingBox(ctx, subject.boundingBox, subject.label, color, subject.confidence);
+    if (obj)     drawBoundingBox(ctx, obj.boundingBox,     obj.label,     color, obj.confidence);
+  });
+}
+
+
 // ── renderAllGroups ────────────────────────────────────────────────────────────
 
 /**
@@ -200,45 +258,41 @@ export function drawEdges(
  * 3. Draws bounding boxes and labels on top
  * 4. NEW: draws scene graph relationship edges if showEdges is true
  */
-// CHANGED: added edges and showEdges params
 export function renderAllGroups(
-  ctx:       CanvasRenderingContext2D,
-  canvas:    HTMLCanvasElement,
-  img:       HTMLImageElement,
-  groups:    MaskGroup[],
-  showMasks: boolean,
-  edges:     Edge[]    = [],
-  showEdges: boolean   = false,
+  ctx:               CanvasRenderingContext2D,
+  canvas:            HTMLCanvasElement,
+  img:               HTMLImageElement,
+  groups:            MaskGroup[],
+  showMasks:         boolean,
+  edges:             Edge[]           = [],
+  showEdges:         boolean          = false,
+  nodes:             SceneGraphNode[] = [],
+  showRelationMasks: boolean          = false,
 ): void {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-  if (!showMasks || groups.length === 0) {
-    // Still draw edges even when masks are hidden, if requested
-    if (showEdges && edges.length > 0) {
-      drawEdges(ctx, groups, edges);
+  if (showRelationMasks && edges.length > 0 && nodes.length > 0) {
+    // Relation-mask mode: highlight only the edge-paired objects, one color per pair.
+    drawRelationMasks(ctx, canvas, nodes, edges);
+  } else if (showMasks && groups.length > 0) {
+    // Normal mask mode: paint all detected groups with their class colors.
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    for (const group of groups) {
+      for (const instance of group.instances) {
+        paintMask(imageData, decodeRleMask(instance.maskRle, canvas.width, canvas.height), group.color);
+      }
     }
-    return;
-  }
+    ctx.putImageData(imageData, 0, 0);
 
-  // Paint mask fills
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  for (const group of groups) {
-    for (const instance of group.instances) {
-      const decoded = decodeRleMask(instance.maskRle, canvas.width, canvas.height);
-      paintMask(imageData, decoded, group.color);
-    }
-  }
-  ctx.putImageData(imageData, 0, 0);
-
-  // Draw bounding boxes and labels
-  for (const group of groups) {
-    for (const instance of group.instances) {
-      drawBoundingBox(ctx, instance.boundingBox, group.label, group.color, instance.confidence);
+    for (const group of groups) {
+      for (const instance of group.instances) {
+        drawBoundingBox(ctx, instance.boundingBox, group.label, group.color, instance.confidence);
+      }
     }
   }
 
-  // NEW: draw relationship edges on top of everything
+// Edge lines always drawn on top regardless of mask mode
   if (showEdges && edges.length > 0) {
     drawEdges(ctx, groups, edges);
   }
