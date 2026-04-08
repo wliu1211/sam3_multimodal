@@ -4,6 +4,10 @@ import cv2
 import numpy as np
 from PIL import Image
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from services.graph import SceneGraph
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -19,6 +23,34 @@ LABEL_OFFSET_Y    = 8
 # object must be within this fraction of the image diagonal to be considered
 # a companion of a given primary instance.
 COMPOSITIONAL_MAX_DIST_FRACTION = 0.45
+
+# Tighter distance threshold used as fallback when a strong relational hint
+# (e.g. "holding") was given but the scene graph produced no qualifying
+# verified edge.  Avoids accepting distant "near" pairs as holding companions.
+COMPOSITIONAL_FALLBACK_DIST_FRACTION = 0.25
+
+# Predicate vocabulary for expanding relational hints.
+# Maps each normalised predicate → acceptable predicate set (including
+# semantically similar / downgraded variants). None = accept any predicate.
+_HINT_TO_ALLOWED: dict[str, set[str] | None] = {
+    "holding":        {"holding", "carrying"},
+    "carrying":       {"carrying", "holding"},
+    "wearing":        {"wearing"},
+    "sitting_on":     {"sitting_on", "on_top_of"},
+    "standing_on":    {"standing_on", "on_top_of"},
+    "on_top_of":      {"on_top_of", "sitting_on", "standing_on"},
+    "walking":        {"walking", "near"},
+    "playing_with":   {"playing_with", "holding", "carrying"},
+    "parked_next_to": {"parked_next_to", "near"},
+    "near":           None,   # weakest hint — any predicate qualifies
+}
+
+# Predicates strong enough to warrant edge-based matching (i.e. pure
+# centroid-distance is not a reliable proxy for "holding" or "wearing").
+_STRONG_PREDICATES: set[str] = {
+    "holding", "carrying", "wearing",
+    "sitting_on", "standing_on", "on_top_of", "playing_with",
+}
 
 GROUP_PALETTE = [
     (74,  222, 128),
@@ -176,25 +208,32 @@ def filter_compositional_instances(
     parsed_query: dict,
     img_w:        int,
     img_h:        int,
+    scene_graph:  "SceneGraph | None" = None,
 ) -> list[dict]:
     """
     Compositional set filtering for multi-class queries.
 
-    For a query like "man with paddle and umbrella", a detected man is only
-    kept when at least one paddle AND at least one umbrella fall within
-    COMPOSITIONAL_MAX_DIST_FRACTION of the image diagonal from his centroid.
-    Men with no complete companion set are excluded entirely, along with any
-    related instances (paddles / umbrellas) that are not paired with a valid
-    primary.
+    For a query like "man holding racket", a detected man is kept only when
+    there is a verified scene-graph edge (holding/carrying) from that man to
+    a racket instance.  When no qualifying edge exists the filter gracefully
+    falls back to centroid-distance, but with a tighter threshold than the
+    pure-distance path so that distant coincidences are not accepted.
 
-    Single-class queries (e.g. "persons", "dogs") have no related targets and
-    pass through unchanged — every detected instance is returned as-is.
+    Single-class queries (e.g. "persons") have no related targets and pass
+    through unchanged.  Related instances are not exclusive: a companion can
+    satisfy multiple primaries simultaneously.
 
-    Related instances are not exclusive: if an umbrella is shared between two
-    nearby men who each also have a paddle, both men form valid sets and both
-    will claim that umbrella.
+    Priority of matching for each (primary, related-class) pair:
+      1. Verified scene-graph edge whose predicate is in the allowed set
+         derived from the query's relational hints.
+      2. Nearest-centroid fallback within COMPOSITIONAL_FALLBACK_DIST_FRACTION
+         of the image diagonal (when hints name a strong predicate and no
+         qualifying edge was found).
+      3. Nearest-centroid fallback within COMPOSITIONAL_MAX_DIST_FRACTION
+         (when no strong hints are present — "near", no hints, etc.).
     """
     from collections import defaultdict
+    from services.sgg import normalize_hints
 
     targets         = parsed_query["targets"]
     primary_classes = {t["base_class"] for t in targets if t["role"] == "primary"}
@@ -203,27 +242,100 @@ def filter_compositional_instances(
     if not related_classes:
         return instances
 
-    img_diag = (img_w ** 2 + img_h ** 2) ** 0.5
-    max_dist = COMPOSITIONAL_MAX_DIST_FRACTION * img_diag
+    # ── Normalise relational hints → set of required predicates ──────────────
+    raw_hints  = parsed_query.get("relational_hints", [])
+    norm_hints = normalize_hints(raw_hints) if raw_hints else []
 
-    matched          = [i for i in instances if i.get("matched")]
-    primaries        = [i for i in matched if i["base_class"] in primary_classes]
+    # Build union of allowed predicates from all hints.
+    # If any hint maps to None (e.g. "near"), every predicate is acceptable.
+    allowed_predicates: set[str] | None = set()
+    for pred in norm_hints:
+        expansion = _HINT_TO_ALLOWED.get(pred)
+        if expansion is None:
+            allowed_predicates = None   # "near" → accept anything
+            break
+        allowed_predicates.update(expansion)  # type: ignore[union-attr]
+    if not norm_hints:
+        allowed_predicates = None              # no hints → any predicate ok
+
+    # Edge-based matching is only meaningful for strong spatial predicates
+    # (holding, wearing, etc.).  "near" and absent hints fall back to distance.
+    has_strong_hints = bool(norm_hints and set(norm_hints) & _STRONG_PREDICATES)
+
+    # ── Build edge index from verified scene-graph edges ─────────────────────
+    # index: instance_id → [(other_id, predicate, confidence), ...]
+    edge_index: dict[str, list[tuple[str, str, float]]] = defaultdict(list)
+    if scene_graph is not None:
+        for edge in scene_graph.verified_edges():
+            edge_index[edge.subject_id].append(
+                (edge.object_id, edge.predicate, edge.confidence)
+            )
+            edge_index[edge.object_id].append(
+                (edge.subject_id, edge.predicate, edge.confidence)
+            )
+
+    img_diag      = (img_w ** 2 + img_h ** 2) ** 0.5
+    max_dist      = COMPOSITIONAL_MAX_DIST_FRACTION * img_diag
+    fallback_dist = COMPOSITIONAL_FALLBACK_DIST_FRACTION * img_diag
+
+    matched             = [i for i in instances if i.get("matched")]
+    primaries           = [i for i in matched if i["base_class"] in primary_classes]
     related_by_class: dict[str, list[dict]] = defaultdict(list)
     for inst in matched:
         if inst["base_class"] in related_classes:
             related_by_class[inst["base_class"]].append(inst)
 
+    id_to_instance: dict[str, dict] = {inst["id"]: inst for inst in matched}
     valid_ids: set[str] = set()
 
     for primary in primaries:
         companions: dict[str, dict] = {}
+
         for rel_class in related_classes:
             pool = related_by_class[rel_class]
             if not pool:
                 break
-            nearest = min(pool, key=lambda r: _centroid_dist(primary["bounding_box"], r["bounding_box"]))
-            if _centroid_dist(primary["bounding_box"], nearest["bounding_box"]) <= max_dist:
-                companions[rel_class] = nearest
+
+            companion: dict | None = None
+
+            # ── 1. Edge-based matching ────────────────────────────────────────
+            # Only attempt when the query carries a strong predicate hint
+            # (e.g. "holding") and the scene graph has verified edges.
+            if has_strong_hints and edge_index:
+                pool_ids  = {inst["id"] for inst in pool}
+                best: dict | None = None
+                best_conf = -1.0
+
+                for other_id, predicate, conf in edge_index.get(primary["id"], []):
+                    if other_id not in pool_ids:
+                        continue
+                    if (
+                        allowed_predicates is not None
+                        and predicate not in allowed_predicates
+                    ):
+                        continue
+                    if conf > best_conf:
+                        best_conf = conf
+                        best      = id_to_instance.get(other_id)
+
+                companion = best
+
+            # ── 2. Distance fallback ──────────────────────────────────────────
+            # Use tighter threshold when a strong hint was given but no
+            # qualifying edge was found, looser threshold otherwise.
+            if companion is None:
+                threshold = fallback_dist if has_strong_hints else max_dist
+                nearest   = min(
+                    pool,
+                    key=lambda r: _centroid_dist(
+                        primary["bounding_box"], r["bounding_box"]
+                    ),
+                )
+                if _centroid_dist(primary["bounding_box"], nearest["bounding_box"]) <= threshold:
+                    companion = nearest
+
+            if companion is not None:
+                companions[rel_class] = companion
 
         if all(rc in companions for rc in related_classes):
             valid_ids.add(primary["id"])

@@ -74,7 +74,7 @@ _GEO_RULES: dict[str, dict] = {
     "on_top_of":      {"min_above": 0.20, "min_horiz_overlap": 0.05},
     "sitting_on":     {"min_above": 0.10, "min_horiz_overlap": 0.02},
     "standing_on":    {"max_base_gap_fraction": 0.08},
-    "holding":        {"max_norm_dist": 0.22, "min_size_ratio": 2.5},
+    "holding":        {"max_norm_dist": 0.28, "min_size_ratio": 2.5},
     "wearing":        {"min_iou": 0.08,  "min_size_ratio": 2.0},
     "carrying":       {"max_norm_dist": 0.18, "min_size_ratio": 2.0},
     "playing_with":   {"max_norm_dist": 0.28},

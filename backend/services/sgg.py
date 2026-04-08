@@ -256,8 +256,10 @@ def _score_predicates(
         scores["standing_on"] = score
 
     # ── holding ────────────────────────────────────────────────────────────
-    # animate subject, much larger than object, close proximity
-    if a_animate and size_ratio > SIZE_RATIO_LARGE and norm_dist < 0.20:
+    # animate subject, much larger than object, within arm's-length proximity.
+    # 0.28 norm_dist allows rackets / paddles held at arm's length to qualify
+    # (vs the old 0.20 which missed extended-arm poses).
+    if a_animate and size_ratio > SIZE_RATIO_LARGE and norm_dist < 0.28:
         score = _clamp(0.4 + (1 - norm_dist) * 0.4 + min(size_ratio / 10, 0.2))
         scores["holding"] = score
 

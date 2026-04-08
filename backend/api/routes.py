@@ -110,13 +110,15 @@ async def query(
             image_bytes, parsed_query, models
         )
 
-        # Compositional filtering: for multi-class queries (e.g. "man with
-        # paddle and umbrella"), keep only primary instances that have every
-        # required related class within proximity, plus their companions.
+        # Compositional filtering: for multi-class queries (e.g. "man holding
+        # racket"), keep only primary instances that satisfy every required
+        # related class via a verified scene-graph edge (when strong relational
+        # hints are present) or centroid-distance fallback.
         # Single-class queries (e.g. "persons") pass through unchanged.
-        _img_pil = Image.open(io.BytesIO(image_bytes))
+        _img_pil     = Image.open(io.BytesIO(image_bytes))
+        _img_w, _img_h = _img_pil.size
         instances = filter_compositional_instances(
-            instances, parsed_query, *_img_pil.size
+            instances, parsed_query, _img_w, _img_h, scene_graph
         )
 
         matched_count = sum(1 for i in instances if i["matched"])
