@@ -4,6 +4,11 @@ set -e
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 VENV="$ROOT/venv"
 
+# ── Load nvm so Vite gets a modern Node.js ────────────────────────────────────
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+nvm use 22 2>/dev/null || true
+
 # ── Backend ───────────────────────────────────────────────────────────────────
 echo "[run] Starting backend on http://localhost:8000 ..."
 source "$VENV/bin/activate"

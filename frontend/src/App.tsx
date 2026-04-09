@@ -76,7 +76,7 @@ export default function App() {
           {result && (
             <section className="panel-section">
               <label className="section-label">Matched groups</label>
-              <ColorLegend groups={result.groups} sceneGraph={result.sceneGraph} />
+              <ColorLegend groups={result.groups}/>
             </section>
           )}
 
