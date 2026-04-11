@@ -1,5 +1,5 @@
 import { apiClient } from "./client";
-import type { QueryRequest, QueryResponse } from "../types/query";
+import type { QueryRequest, QueryResponse, DiscoveryResponse, MaskResponse } from "../types/query";
 import type { QueryHistoryResponse } from "../types/history";
 
 // ── /query ────────────────────────────────────────────────────────────────────
@@ -22,6 +22,48 @@ export async function submitQuery(request: QueryRequest): Promise<QueryResponse>
   const response = await apiClient.post<QueryResponse>("/query", form);
   return response.data;
 }
+
+
+/**
+ * POST /analyze
+ *
+ * Runs the full discovery pipeline on an image with no targeted prompt:
+ *   RAM++ tagging → multi-class SAM 3 → CLIP → SGG → VTT → activity grouping
+ *
+ * Returns an activity list with NLP labels and node_ids per group.
+ * No masking happens here — call maskGroup() when the user clicks a list item.
+ */
+export async function analyzeImage(image: File): Promise<DiscoveryResponse> {
+  const form = new FormData();
+  form.append("image", image);
+  const response = await apiClient.post<DiscoveryResponse>("/analyze", form);
+  return response.data;
+}
+
+
+/**
+ * POST /mask
+ *
+ * Renders masks only for the nodes in the clicked activity group.
+ * Retrieves pre-computed mask data from the server-side discovery cache —
+ * no ML inference runs here, only OpenCV rendering.
+ *
+ * Returns the URL of the annotated result image showing only the
+ * selected group's objects masked.
+ */
+export async function maskGroup(
+  queryId: string,
+  nodeIds: string[],
+  color:   string,
+): Promise<MaskResponse> {
+  const form = new FormData();
+  form.append("query_id", queryId);
+  form.append("node_ids", nodeIds.join(","));
+  form.append("color",    color);
+  const response = await apiClient.post<MaskResponse>("/mask", form);
+  return response.data;
+}
+
 
 // ── /query/:id ────────────────────────────────────────────────────────────────
 

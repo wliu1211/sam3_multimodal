@@ -112,6 +112,11 @@ function extractErrorMessage(error: AxiosError<ApiErrorBody>): string {
 
   const { status, data } = error.response;
 
+  // Always use a friendly message for rate-limit errors regardless of backend detail
+  if (status === 429) {
+    return "Please wait a bit before another request.";
+  }
+
   // Use server-provided message if available
   if (data?.detail !== undefined && data.detail !== null) {
     if (typeof data.detail === "string") return data.detail;
@@ -130,7 +135,7 @@ function extractErrorMessage(error: AxiosError<ApiErrorBody>): string {
     case 415: return "Unsupported image type. Use JPEG, PNG, or WebP.";
     case 413: return "Image is too large. Please upload an image under 20MB.";
     case 422: return "Invalid request format. Please try again.";
-    case 429: return "Too many requests. Please wait a moment before trying again.";
+    case 429: return "Please wait a bit before another request.";
     case 500: return "Server error during inference. Check the backend logs.";
     case 502: return "Backend is not reachable on port 8000. Run ./start-api.sh or ./run.sh (repo root), or from frontend: npm run dev:all — keep the API running while you use the app.";
     case 503: return "Server is busy or a model is unavailable. Check backend logs.";

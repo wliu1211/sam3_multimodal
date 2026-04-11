@@ -44,6 +44,32 @@ export interface QueryResponse {
   createdAt: string;           // ISO timestamp
   sceneGraph: SceneGraph;      // Nodes + verified cross-class edges
 }
+// Discovery Mode
+export interface ActivityGroup {
+  id:            string;
+  label:         string;        // NLP label e.g. "2 people playing pickleball"
+  node_ids:      string[];      // all node IDs participating in this activity
+  predicate:     string | null; // dominant predicate, null for presence-only
+  confidence:    number;
+  subject_count: number;
+  color:         string;
+}
+
+export interface DiscoveryResponse {
+  id:          string;
+  mode:        "discovery";
+  activities:  ActivityGroup[];
+  noun_tags:   string[];
+  sceneGraph:  SceneGraph;
+  inferenceMs: number;
+  createdAt:   string;
+}
+
+export interface MaskResponse {
+  annotatedImageUrl: string;
+  nodeCount:         number;
+  color:             string;
+}
 
 // ── UI state ──────────────────────────────────────────────────────────────────
 
@@ -54,3 +80,13 @@ export interface QueryState {
   result: QueryResponse | null;
   error: string | null;
 }
+
+export interface DiscoveryState {
+  status:          QueryStatus;
+  response:        DiscoveryResponse | null;
+  selectedGroupId: string | null;
+  maskedImageUrl:  string | null;
+  maskLoading:     boolean;
+  error:           string | null;
+}
+ 

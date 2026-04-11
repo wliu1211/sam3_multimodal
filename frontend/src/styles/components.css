@@ -537,7 +537,117 @@
     line-height: 1.5;
   }
   
-  /* ── QueryHistory (sidebar) ─────────────────────────────────────────────────── */
+  /* ── Mode Toggle (Search / Discover) ───────────────────────────────────────── */
+.mode-toggle-group {
+  display: flex;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  flex-shrink: 0;
+  margin: 15px 0;
+}
+
+.mode-toggle-btn {
+  flex: 1;
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--bg-raised);
+  border: none;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast);
+  letter-spacing: 0.2px;
+}
+
+.mode-toggle-btn:not(:first-child) {
+  border-left: 1px solid var(--border-strong);
+}
+
+.mode-toggle-btn:hover:not(.mode-toggle-btn--active) {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.mode-toggle-btn--active {
+  background: var(--accent);
+  color: #fff;
+}
+
+/* ── Describe Image button ──────────────────────────────────────────────────── */
+.describe-image-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast);
+}
+
+.describe-image-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent-border);
+}
+
+.describe-image-btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* ── Activities list ────────────────────────────────────────────────────────── */
+.activities-list {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--bg-raised);
+  min-height: 120px;
+  padding: var(--space-3);
+}
+
+.activities-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: var(--space-5) var(--space-3);
+  font-family: var(--font-mono);
+  line-height: 1.6;
+}
+
+.activity-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  border-bottom: 1px solid var(--border);
+}
+
+.activity-item:last-child {
+  border-bottom: none;
+}
+
+.activity-dot {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-hover);
+  margin-top: 5px;
+}
+
+/* ── QueryHistory (sidebar) ─────────────────────────────────────────────────── */
   .sidebar-backdrop {
     position: fixed;
     inset: 0;

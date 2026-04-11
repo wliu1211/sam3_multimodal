@@ -130,12 +130,45 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[startup] WARNING: CLIP failed to load — {e}")
         models["clip"] = None
+    
+    # 4. RAM++ (for discovery mode)
+    logger.info("[startup] Loading RAM++...")
+    t2 = time.time()
+    try:
+        from ram.models import ram_plus
+
+        ram_checkpoint = MODELS_DIR / "ram" / "ram_plus_swin_large_14m.pth"
+
+        if not ram_checkpoint.exists():
+            logger.warning(
+                f"[startup] RAM++ weights not found at {ram_checkpoint}. "
+                "Discovery mode unavailable. Run: python scripts/download_models.py"
+            )
+            models["ram"] = None
+        else:
+            ram_model = ram_plus(
+                pretrained=str(ram_checkpoint),
+                image_size=384,
+                vit="swin_l",
+            )
+            ram_model.eval()
+            models["ram"] = ram_model
+            logger.info(f"[startup] RAM++ loaded in {time.time() - t2:.1f}s")
+
+    except ImportError:
+        logger.warning("[startup] recognize-anything not installed — RAM++ unavailable. "
+                       "pip install recognize-anything")
+        models["ram"] = None
+    except Exception as e:
+        logger.warning(f"[startup] RAM++ failed to load — {e}")
+        models["ram"] = None
 
     # Make models accessible via app.state
     app.state.models = models
+    app.state.discovery_cache = {}
 
     gpu_status = "GPU" if torch.cuda.is_available() else "CPU"
-    print(f"[startup] Server ready · {gpu_status} · SAM3={'✓' if models.get('sam3') else '✗'} · CLIP={'✓' if models.get('clip') else '✗'}")
+    print(f"[startup] Server ready · {gpu_status} · SAM3={'✓' if models.get('sam3') else '✗'} · CLIP={'✓' if models.get('clip') else '✗'} · RAM++={'✓' if models.get('ram') else '✗'}")
 
     yield  # Server is now running and accepting requests
 
@@ -199,6 +232,7 @@ async def health():
         "models_loaded": {
             "sam3": models.get("sam3") is not None,
             "clip": models.get("clip") is not None,
+            "ram":  models.get("ram")  is not None,
         },
         "gpu_available": torch.cuda.is_available(),
         "device":        models.get("device", "cpu"),
