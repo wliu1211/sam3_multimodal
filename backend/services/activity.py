@@ -7,17 +7,17 @@ Takes a verified scene graph and produces a list of human-readable
 ActivityGroup objects, each with a natural language label and the
 set of node IDs that participate in that activity.
 
-Two-pass grouping (addresses agent concern #4):
+Two-pass grouping:
   Pass 1 — bucket edges by (predicate, object_label)
   Pass 2 — merge buckets that share the same subject node IDs
             (same people doing multiple related things = one activity)
 
-Label generation (addresses agent concern #6):
+Label generation:
   Template first — fast, deterministic, handles most cases
   Claude fallback — only for templates that produce awkward output
                     (near predicate, missing object, unusual combos)
 
-Also handles standalone nodes with no verified edges (agent concern #4):
+Also handles standalone nodes with no verified edges:
   Any detected instance with no edge participation is added as a
   presence-only group: "1 football on the beach"
 """
