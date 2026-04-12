@@ -93,7 +93,7 @@ export default function ResultCanvas({ imageUrl, groups, isAnnotated, sceneGraph
     <div className="result-canvas-wrapper">
       {/* Toolbar */}
       <div className="canvas-toolbar">
-        {isAnnotated && (
+        {isAnnotated && matchCount > 0 && (
           <div className="canvas-stats">
             <span className="match-badge">
               {matchCount} match{matchCount !== 1 ? "es" : ""} found

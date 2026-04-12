@@ -36,9 +36,10 @@ _HINT_TO_ALLOWED: dict[str, set[str] | None] = {
     "holding":        {"holding", "carrying"},
     "carrying":       {"carrying", "holding"},
     "wearing":        {"wearing"},
+    "riding":         {"riding", "on_top_of"},
     "sitting_on":     {"sitting_on", "on_top_of"},
     "standing_on":    {"standing_on", "on_top_of"},
-    "on_top_of":      {"on_top_of", "sitting_on", "standing_on"},
+    "on_top_of":      {"on_top_of", "sitting_on", "standing_on", "riding"},
     "walking":        {"walking", "near"},
     "playing_with":   {"playing_with", "holding", "carrying"},
     "parked_next_to": {"parked_next_to", "near"},
@@ -49,7 +50,7 @@ _HINT_TO_ALLOWED: dict[str, set[str] | None] = {
 # centroid-distance is not a reliable proxy for "holding" or "wearing").
 _STRONG_PREDICATES: set[str] = {
     "holding", "carrying", "wearing",
-    "sitting_on", "standing_on", "on_top_of", "playing_with",
+    "riding", "sitting_on", "standing_on", "on_top_of", "playing_with",
 }
 
 GROUP_PALETTE = [
@@ -321,18 +322,28 @@ def filter_compositional_instances(
                 companion = best
 
             # ── 2. Distance fallback ──────────────────────────────────────────
-            # Use tighter threshold when a strong hint was given but no
-            # qualifying edge was found, looser threshold otherwise.
+            # For strong predicate hints (holding, wearing, carrying, etc.):
+            # skip distance-based fallback when SGG edges are present.
+            # The VTT already enforced one-to-one assignment for these
+            # predicates, so persons that did NOT receive a verified edge
+            # should not qualify via proximity alone — centroid distance
+            # is not a reliable proxy for physical contact.
+            #
+            # If edge_index is completely empty (SGG/VTT pipeline failure),
+            # we fall back to the tight fallback_dist as a last resort so
+            # the pipeline degrades gracefully rather than returning nothing.
             if companion is None:
-                threshold = fallback_dist if has_strong_hints else max_dist
-                nearest   = min(
-                    pool,
-                    key=lambda r: _centroid_dist(
-                        primary["bounding_box"], r["bounding_box"]
-                    ),
-                )
-                if _centroid_dist(primary["bounding_box"], nearest["bounding_box"]) <= threshold:
-                    companion = nearest
+                use_distance = (not has_strong_hints) or (not edge_index)
+                if use_distance:
+                    threshold = fallback_dist if has_strong_hints else max_dist
+                    nearest   = min(
+                        pool,
+                        key=lambda r: _centroid_dist(
+                            primary["bounding_box"], r["bounding_box"]
+                        ),
+                    )
+                    if _centroid_dist(primary["bounding_box"], nearest["bounding_box"]) <= threshold:
+                        companion = nearest
 
             if companion is not None:
                 companions[rel_class] = companion
@@ -372,15 +383,13 @@ def build_groups_payload(
         base_class = tgt["base_class"]
         attrs      = tgt["attributes"]
 
-        # Build the same label format as _make_target_label() in vision.py:
-        # structured fields only (color, make, type, base_class) — no "other".
+ 
         structured_parts = [
             v for v in [attrs.get("color"), attrs.get("make"), attrs.get("type"), base_class]
             if v
         ]
         label = " ".join(structured_parts)
 
-        # Human-readable attribute list shown in the UI (includes other items)
         attr_parts = [
             v for v in [attrs.get("color"), attrs.get("make"), attrs.get("type")]
             if v

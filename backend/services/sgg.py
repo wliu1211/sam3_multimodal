@@ -53,6 +53,18 @@ LARGE_STRUCTURE_CLASSES = {
     "building", "tree", "bench", "table",
 }
 
+# Object classes that a person can ride — used to distinguish "riding"
+# (person on vehicle/animal) from "sitting_on" (person on a static object).
+RIDEABLE_CLASSES = {
+    # wheeled vehicles
+    "bike", "bicycle", "motorcycle", "motorbike", "scooter",
+    "car", "truck", "bus", "van", "vehicle", "moped",
+    # ridden animals
+    "horse", "donkey", "camel", "elephant",
+    # board-style vehicles
+    "skateboard", "snowboard", "surfboard", "sled", "boat",
+}
+
 
 # ── Hint normaliser ───────────────────────────────────────────────────────────
 
@@ -87,6 +99,10 @@ _HINT_MAP: dict[str, str] = {
     "walking with":  "walking",
     "playing with":  "playing_with",
     "playing":       "playing_with",
+    # riding
+    "riding":        "riding",
+    "rides":         "riding",
+    "riding on":     "riding",
     # near / beside
     "near":          "near",
     "next to":       "parked_next_to",
@@ -100,10 +116,10 @@ _HINT_MAP: dict[str, str] = {
     "at":            "near",
 }
 
-# All known predicate names — passed through unchanged if they already match.
 _KNOWN_PREDICATES = {
     "holding", "wearing", "walking", "sitting_on", "standing_on",
     "on_top_of", "carrying", "playing_with", "parked_next_to", "near",
+    "riding",
 }
 
 
@@ -236,10 +252,11 @@ def _score_predicates(
     area_b     = b.box_area
     size_ratio = area_a / area_b if area_b > 0 else 1.0
 
-    a_animate = a.label.lower() in ANIMATE_CLASSES
-    b_animate = b.label.lower() in ANIMATE_CLASSES
-    a_large   = a.label.lower() in LARGE_STRUCTURE_CLASSES
-    b_large   = b.label.lower() in LARGE_STRUCTURE_CLASSES
+    a_animate  = a.label.lower() in ANIMATE_CLASSES
+    b_animate  = b.label.lower() in ANIMATE_CLASSES
+    a_large    = a.label.lower() in LARGE_STRUCTURE_CLASSES
+    b_large    = b.label.lower() in LARGE_STRUCTURE_CLASSES
+    b_rideable = b.label.lower() in RIDEABLE_CLASSES
 
     # Vertical alignment: positive = a is above b
     a_above_b = a.vertical_position_relative_to(b)
@@ -250,11 +267,32 @@ def _score_predicates(
         score = _clamp(a_above_b * 0.5 + iou * 0.5)
         scores["on_top_of"] = score
 
+    # ── riding ─────────────────────────────────────────────────────────────
+    # animate subject directly on/in a vehicle or animal — requires physical
+    # contact: subject base (y2) must be within the rideable object's vertical
+    # extent or no more than 5% of image height above it.
+    if a_animate and b_rideable and a_above_b > 0.10:
+        a_base   = a.bounding_box["y2"]
+        b_top    = b.bounding_box["y1"]
+        b_bot    = b.bounding_box["y2"]
+        touching = b_top <= a_base <= b_bot          # base inside vehicle extent
+        gap_frac = max(0.0, (b_top - a_base) / (img_h + 1)) if not touching else 0.0
+        if touching or gap_frac < 0.05:
+            score = _clamp(0.55 + a_above_b * 0.25 + iou * 0.20)
+            scores["riding"] = score
+
     # ── sitting_on ─────────────────────────────────────────────────────────
-    # animate subject, centroid above object, modest overlap
-    if a_animate and a_above_b > 0.15 and iou > 0.02 and norm_dist < 0.25:
-        score = _clamp(0.4 + a_above_b * 0.3 + iou * 0.3)
-        scores["sitting_on"] = score
+    # animate subject on a non-vehicle/animal object — enforces direct contact:
+    # subject base (y2) must be within the object or ≤8% image height above it.
+    if a_animate and not b_rideable and a_above_b > 0.15 and iou > 0.02 and norm_dist < 0.25:
+        a_base   = a.bounding_box["y2"]
+        b_top    = b.bounding_box["y1"]
+        b_bot    = b.bounding_box["y2"]
+        touching = b_top <= a_base <= b_bot
+        gap_frac = max(0.0, (b_top - a_base) / (img_h + 1)) if not touching else 0.0
+        if touching or gap_frac < 0.08:
+            score = _clamp(0.4 + a_above_b * 0.3 + iou * 0.3)
+            scores["sitting_on"] = score
 
     # ── standing_on ────────────────────────────────────────────────────────
     # animate subject, base of a near top of b, very low iou
@@ -339,7 +377,7 @@ def _assign_subject_object(
     - For symmetric predicates (near, parked_next_to):
       larger node = subject by convention
     """
-    positional = {"on_top_of", "sitting_on", "standing_on"}
+    positional = {"on_top_of", "sitting_on", "standing_on", "riding"}
     size_based = {"holding", "wearing", "carrying"}
 
     if predicate in positional:

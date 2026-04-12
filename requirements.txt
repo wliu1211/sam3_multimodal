@@ -30,6 +30,16 @@ opencv-python-headless==4.10.0.84
 Pillow==11.0.0
 numpy==2.1.3
 
+# ── RAM++ (recognize-anything) ────────────────────────────────────────────────
+# Install from GitHub (not on PyPI):
+#   pip install git+https://github.com/xinyu1205/recognize-anything.git
+# The ram package's bert.py references APIs moved in transformers v5;
+# keep transformers pinned to <5.0 for compatibility.
+# ram                                   # install from GitHub (see above)
+scipy                                  # required by ram swin_transformer
+fairscale                              # required by ram vit
+transformers>=4.25,<5.0               # ram's bert.py uses pre-v5 modeling_utils APIs
+
 # ── Hugging Face (for SAM 3 weight download) ──────────────────────────────────
 huggingface_hub==0.26.5
 

@@ -79,7 +79,7 @@ export default function App() {
     setMaskLoading(true);
 
     try {
-      const result = await maskGroup(discovery.id, group.node_ids, group.color);
+      const result = await maskGroup(discovery.id, group.nodeIds, group.color);
       setMaskedImageUrl(result.annotatedImageUrl);
     } catch (err) {
       setDiscoverError(err instanceof Error ? err.message : "Masking failed.");

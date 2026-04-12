@@ -61,6 +61,7 @@ DOWNGRADE_CHAIN: dict[str, str | None] = {
     "carrying":       "playing_with",
     "playing_with":   "near",
     "wearing":        "near",
+    "riding":         "on_top_of",
     "sitting_on":     "on_top_of",
     "on_top_of":      "near",
     "standing_on":    "near",
@@ -72,7 +73,12 @@ DOWNGRADE_CHAIN: dict[str, str | None] = {
 # Geometry check parameters per predicate
 _GEO_RULES: dict[str, dict] = {
     "on_top_of":      {"min_above": 0.20, "min_horiz_overlap": 0.05},
-    "sitting_on":     {"min_above": 0.10, "min_horiz_overlap": 0.02},
+    # riding: person on vehicle/animal — base must be within or touching the object
+    "riding":         {"min_above": 0.10, "min_horiz_overlap": 0.02,
+                       "max_contact_gap_fraction": 0.06},
+    # sitting_on: person on static object — same contact enforcement, slightly looser gap
+    "sitting_on":     {"min_above": 0.10, "min_horiz_overlap": 0.02,
+                       "max_contact_gap_fraction": 0.08},
     "standing_on":    {"max_base_gap_fraction": 0.08},
     "holding":        {"max_norm_dist": 0.18, "min_size_ratio": 2.5},
     "wearing":        {"min_iou": 0.08,  "min_size_ratio": 2.0},
@@ -285,12 +291,11 @@ def _check_geometry(
     size_ratio = area_sub / area_obj if area_obj > 0 else 1.0
     above      = subject.vertical_position_relative_to(obj)
 
-    # ── on_top_of / sitting_on ────────────────────────────────────────────────
+    # ── on_top_of / sitting_on / riding ─────────────────────────────────────
     if "min_above" in rules:
         if above < rules["min_above"]:
             return False
     if "min_horiz_overlap" in rules:
-        # Check horizontal overlap separately from IoU
         sx1, sx2 = subject.bounding_box["x1"], subject.bounding_box["x2"]
         ox1, ox2 = obj.bounding_box["x1"],     obj.bounding_box["x2"]
         horiz_overlap = max(0, min(sx2, ox2) - max(sx1, ox1))
@@ -298,6 +303,20 @@ def _check_geometry(
         horiz_ratio   = horiz_overlap / horiz_span if horiz_span > 0 else 0
         if horiz_ratio < rules["min_horiz_overlap"]:
             return False
+
+    # Contact check: subject base (y2) must be within the object's vertical
+    # extent OR no more than max_contact_gap_fraction × img_h above it.
+    # This ensures "riding" and "sitting_on" only fire when there is actual
+    # physical contact between the person and the object.
+    if "max_contact_gap_fraction" in rules:
+        a_base   = subject.bounding_box["y2"]
+        b_top    = obj.bounding_box["y1"]
+        b_bot    = obj.bounding_box["y2"]
+        touching = b_top <= a_base <= b_bot          # base inside object extent
+        if not touching:
+            gap_fraction = max(0.0, b_top - a_base) / (img_h + 1)
+            if gap_fraction > rules["max_contact_gap_fraction"]:
+                return False
 
     # ── standing_on ───────────────────────────────────────────────────────────
     if "max_base_gap_fraction" in rules:

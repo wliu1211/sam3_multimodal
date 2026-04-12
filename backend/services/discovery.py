@@ -179,11 +179,22 @@ def _run_ram(image_pil: Image.Image, models: dict) -> list[str]:
         return []
 
     try:
-        from ram import inference_ram_plus as inference
-        result = inference(image_pil, ram)
-        # RAM++ returns a pipe-separated string e.g. "person | dog | bench"
-        tags = [t.strip().lower() for t in result.split("|") if t.strip()]
-        return tags
+        import torch
+        from ram import inference_ram, get_transform
+
+        # Preprocess: resize to 384×384, normalise, add batch dim
+        transform = get_transform(image_size=384)
+        image_tensor = transform(image_pil).unsqueeze(0)
+
+        # Move to the same device as the RAM++ model weights
+        device = next(ram.parameters()).device
+        image_tensor = image_tensor.to(device)
+
+        # inference_ram returns (en_tags_str, zh_tags_str)
+        tags_str, _ = inference_ram(image_tensor, ram)
+
+        # Tags are pipe-separated: "person | beach | racket | ..."
+        return [t.strip().lower() for t in tags_str.split("|") if t.strip()]
     except Exception as e:
         print(f"[discovery] RAM++ inference failed: {e}")
         return []

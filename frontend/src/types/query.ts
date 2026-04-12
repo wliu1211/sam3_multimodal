@@ -46,13 +46,13 @@ export interface QueryResponse {
 }
 // Discovery Mode
 export interface ActivityGroup {
-  id:            string;
-  label:         string;        // NLP label e.g. "2 people playing pickleball"
-  node_ids:      string[];      // all node IDs participating in this activity
-  predicate:     string | null; // dominant predicate, null for presence-only
-  confidence:    number;
-  subject_count: number;
-  color:         string;
+  id:           string;
+  label:        string;        // NLP label e.g. "2 people playing pickleball"
+  nodeIds:      string[];      // all node IDs participating in this activity
+  predicate:    string | null; // dominant predicate, null for presence-only
+  confidence:   number;
+  subjectCount: number;
+  color:        string;
 }
 
 export interface DiscoveryResponse {

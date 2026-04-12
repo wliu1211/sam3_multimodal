@@ -17,9 +17,9 @@ Label generation:
   Claude fallback — only for templates that produce awkward output
                     (near predicate, missing object, unusual combos)
 
-Also handles standalone nodes with no verified edges:
-  Any detected instance with no edge participation is added as a
-  presence-only group: "1 football on the beach"
+Only activities involving at least one verified subject→predicate→object
+relationship are returned; lone detections with no relationships are
+intentionally suppressed to avoid noise in the activity list.
 """
 
 import os
@@ -93,20 +93,14 @@ async def build_activity_groups(
     # ── Pass 2: merge buckets sharing identical subject sets ──────────────────
     merged = _merge_by_subjects(list(buckets.values()))
 
-    # ── Pass 3: standalone nodes (no edge participation) ─────────────────────
-    participating_ids: set[str] = set()
-    for b in merged:
-        for n in b["subjects"] + b["objects"]:
-            participating_ids.add(n.id)
-
-    standalone_groups = _build_standalone_groups(scene_graph, participating_ids)
-
-    # ── Pass 4: assign colors from palette ────────────────────────────────────
+    # ── Pass 3: assign colors from palette ────────────────────────────────────
+    # Standalone (presence-only) groups are intentionally excluded — only
+    # activities involving a subject + predicate + object are surfaced.
     PALETTE = [
         "#4ADE80", "#F87171", "#60A5FA", "#FBBF24", "#E879F9",
         "#34D399", "#FB923C", "#A78BFA", "#F472B6", "#38BDF8",
     ]
-    all_raw = merged + standalone_groups
+    all_raw = merged
     groups: list[ActivityGroup] = []
 
     for i, raw in enumerate(all_raw):
@@ -207,35 +201,6 @@ def _merge_by_subjects(buckets: list[dict]) -> list[dict]:
     return merged
 
 
-# ── Pass 3: standalone nodes ──────────────────────────────────────────────────
-
-def _build_standalone_groups(
-    scene_graph:      SceneGraph,
-    participating_ids: set[str],
-) -> list[dict]:
-    """
-    Builds presence-only groups for nodes that have no verified edges.
-    These appear in the activity list as "1 football on the field" etc.
-    Only creates groups for base-class (non-attribute) nodes.
-    """
-    standalone: list[dict] = []
-
-    for node in scene_graph.base_nodes():
-        if node.id in participating_ids:
-            continue
-        standalone.append({
-            "predicate":     None,
-            "object_label":  None,
-            "predicates":    [],
-            "object_labels": [],
-            "subjects":      [node],
-            "objects":       [],
-            "confidences":   [node.confidence],
-        })
-
-    return standalone
-
-
 # ── Label generation ──────────────────────────────────────────────────────────
 
 async def _generate_label(raw: dict, context_tags: list[str]) -> str:
@@ -258,8 +223,6 @@ def _template_label(raw: dict) -> str:
     Examples:
       2 subjects, predicate=holding, objects=[racket, racket]
         → "2 people holding rackets"
-      1 subject, predicate=None (standalone)
-        → "1 football"
       3 subjects, predicates=[holding, near], objects=[racket, pickleball]
         → "3 people holding rackets near a pickleball"
     """
@@ -272,10 +235,6 @@ def _template_label(raw: dict) -> str:
     sub_label = subjects[0].label if subjects else "object"
     sub_plural = _pluralise(sub_label, n_sub)
     sub_prefix = f"{n_sub} " if n_sub > 1 else "1 "
-
-    # Presence-only — no relationship
-    if not predicates or predicates == [None]:
-        return f"{sub_prefix}{sub_plural}"
 
     # Build predicate + object phrase
     rel_parts = []
