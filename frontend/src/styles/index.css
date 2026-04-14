@@ -1,40 +1,40 @@
-/* ── Fonts ──────────────────────────────────────────────────────────────────── */
+
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
 
-/* ── Component styles ───────────────────────────────────────────────────────── */
+
 @import './components.css';
 
-/* ── CSS Variables ──────────────────────────────────────────────────────────── */
+
 :root {
-  /* Backgrounds */
+  
   --bg-base:        #0d0f14;
   --bg-surface:     #13161e;
   --bg-raised:      #1a1e2a;
   --bg-hover:       #1f2333;
   --bg-active:      #252a3a;
 
-  /* Borders */
+  
   --border:         #232736;
   --border-strong:  #2e334a;
 
-  /* Text */
+  
   --text-primary:   #c9cfe0;
   --text-secondary: #7a82a0;
   --text-muted:     #424963;
   --text-white:     #f0f2f8;
 
-  /* Accent — blue/indigo */
+  
   --accent:         #5c6bc0;
   --accent-hover:   #6b7cd4;
   --accent-dim:     #5c6bc022;
   --accent-border:  #5c6bc055;
 
-  /* Semantic */
+  
   --success:        #4ade80;
   --warning:        #fbbf24;
   --danger:         #f87171;
 
-  /* Spacing scale */
+  
   --space-1:  4px;
   --space-2:  8px;
   --space-3:  12px;
@@ -44,33 +44,33 @@
   --space-8:  32px;
   --space-10: 40px;
 
-  /* Border radii */
+  
   --radius-sm:  4px;
   --radius-md:  8px;
   --radius-lg:  12px;
   --radius-xl:  16px;
 
-  /* Shadows */
+  
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.6);
 
-  /* Typography */
+  
   --font-sans: 'Inter', system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 
-  /* Transitions */
+  
   --transition-fast: 100ms ease;
   --transition-base: 180ms ease;
   --transition-slow: 280ms ease;
 
-  /* Layout */
+  
   --topbar-height:    56px;
   --input-panel-width: 320px;
   --sidebar-width:    300px;
 }
 
-/* ── Reset ──────────────────────────────────────────────────────────────────── */
+
 *,
 *::before,
 *::after {
@@ -93,7 +93,7 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  overflow: hidden; /* App shell manages its own scroll areas */
+  overflow: hidden; 
 }
 
 img,
@@ -146,7 +146,7 @@ kbd {
   color: var(--text-secondary);
 }
 
-/* ── App shell layout ───────────────────────────────────────────────────────── */
+
 .app-shell {
   display: flex;
   flex-direction: column;
@@ -155,7 +155,7 @@ kbd {
   overflow: hidden;
 }
 
-/* ── Topbar ─────────────────────────────────────────────────────────────────── */
+
 .topbar {
   flex-shrink: 0;
   height: var(--topbar-height);
@@ -205,7 +205,7 @@ kbd {
   color: var(--text-primary);
 }
 
-/* ── Main layout ────────────────────────────────────────────────────────────── */
+
 .main-layout {
   flex: 1;
   display: flex;
@@ -213,7 +213,7 @@ kbd {
   position: relative;
 }
 
-/* ── Input panel (left) ─────────────────────────────────────────────────────── */
+
 .input-panel {
   flex-shrink: 0;
   width: var(--input-panel-width);
@@ -243,7 +243,7 @@ kbd {
   font-family: var(--font-mono);
 }
 
-/* ── Canvas panel (center) ──────────────────────────────────────────────────── */
+
 .canvas-panel {
   flex: 1;
   position: relative;
@@ -266,7 +266,7 @@ kbd {
   backdrop-filter: blur(2px);
 }
 
-/* ── Empty state ────────────────────────────────────────────────────────────── */
+
 .empty-state {
   display: flex;
   flex-direction: column;
@@ -299,7 +299,7 @@ kbd {
   color: var(--accent-hover);
 }
 
-/* ── Error banner ───────────────────────────────────────────────────────────── */
+
 .error-banner {
   padding: var(--space-3) var(--space-4);
   background: rgba(248, 113, 113, 0.08);
@@ -310,20 +310,20 @@ kbd {
   line-height: 1.5;
 }
 
-/* ── Scrollbar styling ──────────────────────────────────────────────────────── */
+
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
-/* ── Focus ring ─────────────────────────────────────────────────────────────── */
+
 :focus-visible {
   outline: 2px solid var(--accent-hover);
   outline-offset: 2px;
   border-radius: var(--radius-sm);
 }
 
-/* ── Dividers between sections ──────────────────────────────────────────────── */
+
 .panel-divider {
   height: 1px;
   background: var(--border);

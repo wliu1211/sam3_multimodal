@@ -24,32 +24,32 @@ from services.graph import Node, SceneGraph
 from services.sgg   import build_scene_graph, normalize_hints
 from services.vtt   import verify_edges
 
-# ── Client ────────────────────────────────────────────────────────────────────
+                                                                                
 
 _client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+                                                                                
 
 CLIP_AMBIGUOUS_LOW    = 0.40
 CLIP_AMBIGUOUS_HIGH   = 0.70
 MIN_BOX_AREA_FRACTION = 0.001
 CROP_PADDING_PX       = 12
 
-# IoU threshold for deduplication across same base_class detections
+                                                                   
 DEDUP_IOU_THRESHOLD   = 0.70
 
-# Max side length (px) fed into SAM 3. Larger images are downscaled to this
-# before inference and results are mapped back to original coordinates.
-# Lower → faster; raise if small-object recall suffers.
+                                                                           
+                                                                       
+                                                       
 SAM_INPUT_MAX_SIDE = 1024
 
-# Maximum detections kept per object class after SAM3. Detections are sorted
-# by SAM3 score descending before the cap is applied, so the strongest signals
-# are always kept. Without a cap, busy scenes (e.g. 50 people) would run CLIP
-# 50 times and hold the GPU lock for a very long time.
+                                                                            
+                                                                              
+                                                                             
+                                                      
 MAX_DETECTIONS_PER_CLASS = 20
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+                                                                                
 
 def _maybe_downscale(
     image: Image.Image,
@@ -96,7 +96,7 @@ def _box_to_int_xyxy(box) -> tuple[int, int, int, int]:
     return tuple(int(v) for v in box)
 
 
-# ── Box IoU helper (for dedup) ────────────────────────────────────────────────
+                                                                                
 
 def _box_iou(a: dict, b: dict) -> float:
     ix1 = max(a["x1"], b["x1"])
@@ -144,7 +144,7 @@ def _dedup_instances(instances: list[dict]) -> list[dict]:
     return deduped
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+                                                                                
 
 async def run_vision_pipeline(
     image_bytes:  bytes,
@@ -182,16 +182,16 @@ async def run_vision_pipeline(
     image_pil    = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_w, img_h = image_pil.size
 
-    # Downscale before SAM3 to reduce preprocessing and mask-upsampling cost.
-    # Boxes and masks are mapped back to original coordinates afterwards.
+                                                                             
+                                                                         
     sam_pil, _sx, _sy = _maybe_downscale(image_pil, SAM_INPUT_MAX_SIDE)
 
     targets          = parsed_query["targets"]
     relational_hints = parsed_query.get("relational_hints", [])
 
-    # ── Steps 1–3: SAM3 detection + CLIP scoring (GPU — serialised) ───────────
-    # The GpuQueue lock is held ONLY for this block. VTT / SGG run afterwards
-    # outside the lock so Claude API calls never block other requests.
+                                                                                
+                                                                             
+                                                                      
 
     class_to_targets: dict[str, list[dict]] = defaultdict(list)
     for tgt in targets:
@@ -206,18 +206,18 @@ async def run_vision_pipeline(
             if not detections:
                 continue
 
-            # Sort by SAM3 score descending and cap to avoid unbounded CLIP work.
+                                                                                 
             detections = sorted(detections, key=lambda d: d["sam_score"], reverse=True)
             detections = detections[:MAX_DETECTIONS_PER_CLASS]
 
-            # Targets with no attribute constraints skip CLIP entirely — SAM3's
-            # own score is used directly. Targets with attributes (color, make,
-            # etc.) go through CLIP verification for each detection.
+                                                                               
+                                                                               
+                                                                    
             any_attrs = any(_has_attributes(t) for t in class_targets)
 
-            # ── Score each detection against every target in its class ─────────
+                                                                                 
             for det in detections:
-                # Scale bounding box from SAM input space → original image space
+                                                                                
                 raw_box = det["bounding_box"]
                 box = {
                     "x1": round(raw_box["x1"] * _sx),
@@ -226,7 +226,7 @@ async def run_vision_pipeline(
                     "y2": round(raw_box["y2"] * _sy),
                 }
 
-                # Scale mask from SAM input space → original image space
+                                                                        
                 mask = det["mask"]
                 if _sx != 1.0 or _sy != 1.0:
                     mask = np.array(
@@ -238,11 +238,11 @@ async def run_vision_pipeline(
                     continue
 
                 if not any_attrs:
-                    # Simple detection: no attributes → trust SAM3 directly.
-                    # SAM3 already filtered with its own 0.5 sigmoid threshold,
-                    # so every returned detection is a valid match. The parser's
-                    # confidence_threshold is calibrated for CLIP scores and must
-                    # not be applied here — it would silently drop real detections.
+                                                                            
+                                                                               
+                                                                                
+                                                                                 
+                                                                                   
                     best_target = class_targets[0]
                     best_score  = det["sam_score"]
                     all_instances.append({
@@ -258,15 +258,15 @@ async def run_vision_pipeline(
                     global_id += 1
                     continue
 
-                # Attribute filtering: run CLIP for each attribute variant.
+                                                                           
                 crop = _crop_instance(image_pil, box, img_w, img_h)
 
                 best_target: dict | None = None
                 best_score               = -1.0
 
                 for tgt in class_targets:
-                    # Skip CLIP for targets that carry no attributes even when
-                    # sibling targets do — use SAM score as a floor instead.
+                                                                              
+                                                                            
                     if not _has_attributes(tgt):
                         if det["sam_score"] > best_score:
                             best_score  = det["sam_score"]
@@ -302,14 +302,14 @@ async def run_vision_pipeline(
                     "target_label": _make_target_label(base_class, best_target["attributes"]),
                 })
                 global_id += 1
-    # GPU lock released — SGG and VTT run from here without blocking the queue.
+                                                                               
 
-    # ── Dedup overlapping boxes within the same class ─────────────────────────
+                                                                                
     all_instances = _dedup_instances(all_instances)
 
-    # ── Steps 4–6: scene graph (only when multi-class or relational hints) ────
-    # For plain single-class queries there are no cross-object edges to build,
-    # so we skip the SGG + VTT pass entirely and return an empty graph.
+                                                                                
+                                                                              
+                                                                       
     distinct_classes = {inst["base_class"] for inst in all_instances}
     needs_graph = len(distinct_classes) > 1 or bool(relational_hints)
 
@@ -352,7 +352,7 @@ async def run_vision_pipeline(
     return all_instances, graph
 
 
-# ── SAM 3 detection ───────────────────────────────────────────────────────────
+                                                                                
 
 def _detect_with_sam3(
     image_pil:  Image.Image,
@@ -397,7 +397,7 @@ def _detect_with_sam3(
     return detections
 
 
-# ── CLIP scoring ──────────────────────────────────────────────────────────────
+                                                                                
 
 def _score_with_clip(
     crop:             Image.Image,
@@ -434,7 +434,7 @@ def _score_with_clip(
     return float(probs[0][0].item())
 
 
-# ── Claude Vision fallback ────────────────────────────────────────────────────
+                                                                                
 
 async def _verify_with_claude_vision(
     crop:       Image.Image,
@@ -485,7 +485,7 @@ async def _verify_with_claude_vision(
         return False
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+                                                                                
 
 def _make_target_label(base_class: str, attributes: dict) -> str:
     """

@@ -5,27 +5,27 @@ from middleware.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── Config ────────────────────────────────────────────────────────────────────
+                                                                                
 
-# Maximum number of /query requests allowed per client IP per window.
+                                                                     
 MAX_REQUESTS    = 10
-WINDOW_SECONDS  = 60  # 1-minute rolling window
+WINDOW_SECONDS  = 60                           
 
-# How many seconds a client must wait between consecutive /query requests.
-# Prevents someone from hammering the endpoint while a query is still running.
+                                                                          
+                                                                              
 MIN_INTERVAL_SECONDS = 3.0
 
-# ── State ─────────────────────────────────────────────────────────────────────
+                                                                                
 
-# Maps client IP → list of request timestamps within the current window.
-# In-memory only — resets on server restart, which is fine for a demo.
+                                                                        
+                                                                      
 _request_log: dict[str, list[float]] = defaultdict(list)
 
-# Maps client IP → timestamp of their last /query request.
+                                                          
 _last_request: dict[str, float] = {}
 
 
-# ── FastAPI dependency ────────────────────────────────────────────────────────
+                                                                                
 
 async def rate_limit(request: Request) -> None:
     """
@@ -46,7 +46,7 @@ async def rate_limit(request: Request) -> None:
     client_ip = _get_client_ip(request)
     now       = time.time()
 
-    # Rule 1 — minimum interval between requests
+                                                
     last = _last_request.get(client_ip)
     if last is not None:
         elapsed = now - last
@@ -59,11 +59,11 @@ async def rate_limit(request: Request) -> None:
                 headers={"Retry-After": str(wait)},
             )
 
-    # Rule 2 — rolling window
+                             
     window_start = now - WINDOW_SECONDS
     timestamps   = _request_log[client_ip]
 
-    # Drop timestamps outside the window
+                                        
     _request_log[client_ip] = [t for t in timestamps if t > window_start]
 
     if len(_request_log[client_ip]) >= MAX_REQUESTS:
@@ -80,7 +80,7 @@ async def rate_limit(request: Request) -> None:
             headers={"Retry-After": str(retry_in)},
         )
 
-    # Record this request
+                         
     _request_log[client_ip].append(now)
     _last_request[client_ip] = now
     logger.debug(
@@ -89,7 +89,7 @@ async def rate_limit(request: Request) -> None:
     )
 
 
-# ── Helper ────────────────────────────────────────────────────────────────────
+                                                                                
 
 def _get_client_ip(request: Request) -> str:
     """

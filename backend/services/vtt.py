@@ -34,28 +34,28 @@ import numpy as np
 from anthropic import AsyncAnthropic
 from services.graph import Node, Edge, SceneGraph
 
-# ── Client ────────────────────────────────────────────────────────────────────
+                                                                                
 
 _client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# ── Config ────────────────────────────────────────────────────────────────────
+                                                                                
 
-# Attribute mask must overlap parent mask by at least this fraction
-# for the containment check to pass.
+                                                                   
+                                    
 CONTAINMENT_THRESHOLD = 0.90
 
-# SGG confidence range that triggers Claude Vision spot-check.
-# Below AMBIGUOUS_LOW → reject edge entirely.
-# Above AMBIGUOUS_HIGH → accept without spot-check.
+                                                              
+                                             
+                                                   
 AMBIGUOUS_LOW  = 0.35
 AMBIGUOUS_HIGH = 0.70
 
-# Maximum number of edges sent to VTT. Edges are sorted by SGG confidence
-# descending before the cap; the weakest proposals are dropped first.
-# Without a cap, a scene with N objects can produce O(N²) edges.
+                                                                         
+                                                                     
+                                                                
 MAX_VTT_EDGES = 40
 
-# Predicate downgrade chains — key → next predicate if check fails.
+                                                                   
 DOWNGRADE_CHAIN: dict[str, str | None] = {
     "holding":        "carrying",
     "carrying":       "playing_with",
@@ -67,30 +67,30 @@ DOWNGRADE_CHAIN: dict[str, str | None] = {
     "standing_on":    "near",
     "walking":        "near",
     "parked_next_to": "near",
-    "near":           None,   # terminal — never downgrade further
+    "near":           None,                                       
 }
 
-# Geometry check parameters per predicate
+                                         
 _GEO_RULES: dict[str, dict] = {
-    "on_top_of":      {"min_above": 0.20, "min_horiz_overlap": 0.05},
-    # riding: person on vehicle/animal — base must be within or touching the object
-    "riding":         {"min_above": 0.10, "min_horiz_overlap": 0.02,
-                       "max_contact_gap_fraction": 0.06},
-    # sitting_on: person on static object — same contact enforcement, slightly looser gap
-    "sitting_on":     {"min_above": 0.10, "min_horiz_overlap": 0.02,
-                       "max_contact_gap_fraction": 0.08},
+    "on_top_of":      {"min_above": 0.25, "min_horiz_overlap": 0.10,
+                       "max_contact_gap_fraction": 0.05},
+    "riding":         {"min_above": 0.20, "min_horiz_overlap": 0.12,
+                       "max_contact_gap_fraction": 0.03},
+
+    "sitting_on":     {"min_above": 0.20, "min_horiz_overlap": 0.10,
+                       "max_contact_gap_fraction": 0.04},
     "standing_on":    {"max_base_gap_fraction": 0.08},
-    "holding":        {"max_norm_dist": 0.18, "min_size_ratio": 2.5},
+    "holding":        {"max_box_gap_norm": 0.05, "min_size_ratio": 4.0},
     "wearing":        {"min_iou": 0.08,  "min_size_ratio": 2.0},
     "carrying":       {"max_norm_dist": 0.18, "min_size_ratio": 2.0},
     "playing_with":   {"max_norm_dist": 0.28},
     "walking":        {"max_norm_dist": 0.32},
     "parked_next_to": {"max_norm_dist": 0.28, "max_vert_offset": 0.15},
-    "near":           {},     # near always passes geometry check
+    "near":           {},                                        
 }
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+                                                                                
 
 async def verify_edges(
     graph:      SceneGraph,
@@ -111,17 +111,17 @@ async def verify_edges(
     """
     img_diag = (img_w ** 2 + img_h ** 2) ** 0.5
 
-    # ── Step 1: Containment check for attribute nodes ─────────────────────────
+                                                                                
     _verify_attribute_containment(graph, img_w, img_h)
 
-    # ── Step 2: Verify each edge ──────────────────────────────────────────────
-    # Sort edges by SGG confidence and cap to MAX_VTT_EDGES before verification.
-    # A scene with N detected objects produces O(N²) candidate edges; without a
-    # cap, large queries make sequential Claude API calls for every pair.
+                                                                                
+                                                                                
+                                                                               
+                                                                         
     candidate_edges = sorted(graph.edges, key=lambda e: e.confidence, reverse=True)
     candidate_edges = candidate_edges[:MAX_VTT_EDGES]
 
-    # Resolve node references once so coroutines don't repeat the lookup.
+                                                                         
     tasks = []
     for edge in candidate_edges:
         subject = graph.get_node(edge.subject_id)
@@ -132,33 +132,33 @@ async def verify_edges(
             _verify_single_edge(edge, subject, obj, image_pil, img_w, img_h, img_diag)
         )
 
-    # Run all edge verifications concurrently — Claude API calls are async I/O
-    # so parallelising them cuts total VTT time from N×latency to ~1×latency.
+                                                                              
+                                                                             
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     verified_edges = []
     for res in results:
         if isinstance(res, Exception):
-            continue  # skip edges that errored rather than crashing the whole pipeline
+            continue                                                                   
         if res is not None:
             verified_edges.append(res)
 
-    # One-to-one assignment: for strong predicates (holding, wearing, etc.),
-    # each related object should connect to at most one primary subject.
-    # Keeps the highest-confidence edge per (predicate, object_id) pair so that
-    # a single racket cannot link to many people simultaneously.
+                                                                            
+                                                                        
+                                                                               
+                                                                
     graph.edges = _enforce_one_to_one(verified_edges)
     return graph
 
 
-# ── One-to-one edge assignment ────────────────────────────────────────────────
-# Predicates where a related object can only belong to ONE primary subject.
-# These are grabbing/contact predicates where a small object (racket, ball,
-# shirt) is physically controlled by a single person at a time.
-#
-# Surface predicates (sitting_on, standing_on, on_top_of) are intentionally
-# excluded: a surface (sand, bench, table) can support many subjects
-# simultaneously, so one-to-one assignment would wrongly collapse them to 1.
+                                                                                
+                                                                           
+                                                                           
+                                                               
+ 
+                                                                           
+                                                                    
+                                                                            
 _ONE_TO_ONE_PREDICATES: frozenset[str] = frozenset({
     "holding", "carrying", "wearing", "playing_with",
 })
@@ -183,7 +183,7 @@ def _enforce_one_to_one(edges: list[Edge]) -> list[Edge]:
     return list(best.values()) + non_exclusive
 
 
-# ── Attribute containment check ───────────────────────────────────────────────
+                                                                                
 
 def _verify_attribute_containment(
     graph: SceneGraph,
@@ -215,11 +215,11 @@ def _verify_attribute_containment(
         )
 
         if overlap < CONTAINMENT_THRESHOLD:
-            # Attribute doesn't belong to this parent — disown it
+                                                                 
             attr_node.parent_id = None
 
 
-# ── Single edge verification ──────────────────────────────────────────────────
+                                                                                
 
 async def _verify_single_edge(
     edge:      Edge,
@@ -239,19 +239,19 @@ async def _verify_single_edge(
     predicate  = edge.predicate
     confidence = edge.confidence
 
-    # Reject edges below the ambiguous zone immediately
+                                                       
     if confidence < AMBIGUOUS_LOW:
         return None
 
-    # ── Geometry check ────────────────────────────────────────────────────────
+                                                                                
     geo_pass = _check_geometry(subject, obj, predicate, img_w, img_h, img_diag)
 
     if not geo_pass:
-        # Try downgrading
+                         
         downgraded = _downgrade(edge, subject, obj, img_w, img_h, img_diag)
         return downgraded
 
-    # ── Claude spot-check for ambiguous confidence ────────────────────────────
+                                                                                
     if AMBIGUOUS_LOW <= confidence <= AMBIGUOUS_HIGH:
         confirmed = await _claude_spot_check(
             subject, obj, predicate, image_pil, img_w, img_h
@@ -260,12 +260,12 @@ async def _verify_single_edge(
             downgraded = _downgrade(edge, subject, obj, img_w, img_h, img_diag)
             return downgraded
 
-    # ── Edge passes all checks ────────────────────────────────────────────────
+                                                                                
     edge.verified = True
     return edge
 
 
-# ── Geometry check ────────────────────────────────────────────────────────────
+                                                                                
 
 def _check_geometry(
     subject:   Node,
@@ -281,7 +281,7 @@ def _check_geometry(
     """
     rules = _GEO_RULES.get(predicate, {})
     if not rules:
-        return True  # "near" and unknown predicates always pass
+        return True                                             
 
     iou        = subject.overlap_ratio(obj)
     dist       = subject.distance_to(obj)
@@ -291,7 +291,7 @@ def _check_geometry(
     size_ratio = area_sub / area_obj if area_obj > 0 else 1.0
     above      = subject.vertical_position_relative_to(obj)
 
-    # ── on_top_of / sitting_on / riding ─────────────────────────────────────
+                                                                              
     if "min_above" in rules:
         if above < rules["min_above"]:
             return False
@@ -304,21 +304,21 @@ def _check_geometry(
         if horiz_ratio < rules["min_horiz_overlap"]:
             return False
 
-    # Contact check: subject base (y2) must be within the object's vertical
-    # extent OR no more than max_contact_gap_fraction × img_h above it.
-    # This ensures "riding" and "sitting_on" only fire when there is actual
-    # physical contact between the person and the object.
+                                                                           
+                                                                       
+                                                                           
+                                                         
     if "max_contact_gap_fraction" in rules:
         a_base   = subject.bounding_box["y2"]
         b_top    = obj.bounding_box["y1"]
         b_bot    = obj.bounding_box["y2"]
-        touching = b_top <= a_base <= b_bot          # base inside object extent
+        touching = b_top <= a_base <= b_bot                                     
         if not touching:
             gap_fraction = max(0.0, b_top - a_base) / (img_h + 1)
             if gap_fraction > rules["max_contact_gap_fraction"]:
                 return False
 
-    # ── standing_on ───────────────────────────────────────────────────────────
+                                                                                
     if "max_base_gap_fraction" in rules:
         a_base = subject.bounding_box["y2"]
         b_top  = obj.bounding_box["y1"]
@@ -326,22 +326,32 @@ def _check_geometry(
         if gap_fraction > rules["max_base_gap_fraction"]:
             return False
 
-    # ── Distance rules ────────────────────────────────────────────────────────
+                                                                                
     if "max_norm_dist" in rules:
         if norm_dist > rules["max_norm_dist"]:
             return False
 
-    # ── Size ratio rules ──────────────────────────────────────────────────────
+                                                                                
     if "min_size_ratio" in rules:
         if size_ratio < rules["min_size_ratio"]:
             return False
 
-    # ── IoU rules ─────────────────────────────────────────────────────────────
+                                                                                
     if "min_iou" in rules:
         if iou < rules["min_iou"]:
             return False
 
-    # ── Vertical offset rules (parked_next_to) ────────────────────────────────
+                                                                                
+                                                                               
+                                                                              
+                                                                               
+                                                                                 
+    if "max_box_gap_norm" in rules:
+        box_gap_norm = subject.box_edge_distance(obj) / img_diag
+        if box_gap_norm > rules["max_box_gap_norm"]:
+            return False
+
+                                                                                
     if "max_vert_offset" in rules:
         if abs(above) > rules["max_vert_offset"]:
             return False
@@ -349,7 +359,7 @@ def _check_geometry(
     return True
 
 
-# ── Predicate downgrading ─────────────────────────────────────────────────────
+                                                                                
 
 def _downgrade(
     edge:     Edge,
@@ -368,30 +378,30 @@ def _downgrade(
     next_pred   = DOWNGRADE_CHAIN.get(current)
 
     if next_pred is None:
-        return None  # Terminal — no further downgrade possible
+        return None                                            
 
-    # Check geometry for the downgraded predicate
+                                                 
     geo_pass = _check_geometry(
         subject, obj, next_pred, img_w, img_h, img_diag
     )
 
     if not geo_pass:
-        # Try downgrading again
+                               
         edge.predicate = next_pred
         return _downgrade(edge, subject, obj, img_w, img_h, img_diag)
 
-    # Downgrade succeeds
+                        
     original = edge.original_predicate or edge.predicate
     edge.original_predicate = original
     edge.predicate          = next_pred
     edge.downgraded         = True
     edge.verified           = True
-    # Reduce confidence to reflect the downgrade
+                                                
     edge.confidence         = round(edge.confidence * 0.75, 4)
     return edge
 
 
-# ── Claude Vision spot-check ──────────────────────────────────────────────────
+                                                                                
 
 async def _claude_spot_check(
     subject:   Node,
@@ -452,10 +462,10 @@ async def _claude_spot_check(
     except Exception as e:
         print(f"[vtt] Claude spot-check failed ({subject.label} {predicate} "
               f"{obj.label}): {e} — defaulting to geometry result")
-        return True  # Trust geometry on API failure
+        return True                                 
 
 
-# ── Mask containment helper ───────────────────────────────────────────────────
+                                                                                
 
 def _mask_containment_fraction(
     child_rle:  list[int],
@@ -486,7 +496,7 @@ def _decode_rle(rle: list[int], total_pixels: int) -> np.ndarray:
     """Decodes alternating RLE [bg_count, fg_count, ...] into a flat bool array."""
     flat    = np.zeros(total_pixels, dtype=bool)
     pixel   = 0
-    value   = False  # starts with background
+    value   = False                          
 
     for count in rle:
         if value:

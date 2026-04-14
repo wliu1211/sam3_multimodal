@@ -185,6 +185,58 @@ def download_clip() -> bool:
         return False
 
 
+# ── RAM++ ─────────────────────────────────────────────────────────────────────
+
+def download_ram() -> bool:
+    """
+    Downloads RAM++ (Recognize Anything Plus) weights from Hugging Face into
+    models/ram/ram_plus_swin_large_14m.pth  (~3 GB).
+
+    Model card: https://huggingface.co/xinyu1205/recognize-anything-plus-model
+    """
+    banner("Downloading RAM++ weights")
+
+    ram_dir = MODELS_DIR / "ram"
+    ram_dir.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_path = ram_dir / "ram_plus_swin_large_14m.pth"
+
+    if checkpoint_path.exists():
+        success(f"RAM++ weights already present at {checkpoint_path}")
+        return True
+
+    try:
+        from huggingface_hub import hf_hub_download
+        from huggingface_hub.errors import HfHubHTTPError, LocalEntryNotFoundError
+
+        info("Downloading ram_plus_swin_large_14m.pth from xinyu1205/recognize-anything-plus-model ...")
+        info("This is ~3 GB — may take several minutes depending on your connection.")
+
+        downloaded = hf_hub_download(
+            repo_id   = "xinyu1205/recognize-anything-plus-model",
+            filename  = "ram_plus_swin_large_14m.pth",
+            local_dir = str(ram_dir),
+        )
+
+        success(f"RAM++ saved to: {downloaded}")
+        return True
+
+    except LocalEntryNotFoundError as e:
+        inner = e.__cause__ if isinstance(e.__cause__, HfHubHTTPError) else None
+        error(f"Download failed (file not found locally or offline): {e}")
+        if inner:
+            error(f"  (caused by: {inner})")
+        return False
+
+    except HfHubHTTPError as e:
+        error(f"Download failed (HTTP error): {e}")
+        return False
+
+    except Exception as e:
+        error(f"Unexpected error downloading RAM++: {e}")
+        return False
+
+
 # ── SAM 3 smoke test ──────────────────────────────────────────────────────────
 
 def verify_sam3() -> bool:
@@ -238,7 +290,7 @@ def verify_sam3() -> bool:
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("\nSemantic Visual Query — Model Setup")
+    print("\nMultimodel Visual Query — Model Setup")
     print(f"Project root : {PROJECT_ROOT}")
     print(f"Models dir   : {MODELS_DIR}")
     print(f"PyTorch      : {torch.__version__}")
@@ -248,6 +300,7 @@ if __name__ == "__main__":
 
     sam3_ok = download_sam3()
     clip_ok = download_clip()
+    ram_ok  = download_ram()
 
     if sam3_ok:
         verify_sam3()
@@ -255,8 +308,9 @@ if __name__ == "__main__":
     banner("Summary")
     print(f"  SAM 3 : {'✓ ready' if sam3_ok else '✗ failed — see errors above'}")
     print(f"  CLIP  : {'✓ ready' if clip_ok else '✗ failed — see errors above'}")
+    print(f"  RAM++ : {'✓ ready' if ram_ok  else '✗ failed — see errors above'}")
 
-    if sam3_ok and clip_ok:
+    if sam3_ok and clip_ok and ram_ok:
         print("\n  All models ready. You can now run:  bash run.sh")
     else:
         print("\n  Fix the errors above before starting the server.")

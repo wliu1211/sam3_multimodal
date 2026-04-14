@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
-# ── Node ──────────────────────────────────────────────────────────────────────
+                                                                                
 
 @dataclass
 class Node:
@@ -32,14 +32,14 @@ class Node:
     """
     id:           str
     label:        str
-    bounding_box: dict                  # {x1, y1, x2, y2}
+    bounding_box: dict                                    
     mask_rle:     list[int]
     confidence:   float
     is_attribute: bool         = False
     parent_id:    Optional[str] = None
-    role:         str          = "primary"   # "primary" | "related"
+    role:         str          = "primary"                          
 
-    # ── Geometry helpers ──────────────────────────────────────────────────────
+                                                                                
 
     @property
     def box_area(self) -> int:
@@ -56,6 +56,18 @@ class Node:
         cx1, cy1 = self.centroid
         cx2, cy2 = other.centroid
         return ((cx1 - cx2) ** 2 + (cy1 - cy2) ** 2) ** 0.5
+
+    def box_edge_distance(self, other: "Node") -> float:
+        """
+        Minimum pixel distance between the nearest edges of two bounding boxes.
+        Returns 0.0 when the boxes overlap or share an edge (i.e. truly touching).
+        This is stricter than centroid distance for contact-based predicates like
+        holding, where the object must be in the subject's hand, not merely nearby.
+        """
+        a, b = self.bounding_box, other.bounding_box
+        gap_x = max(0.0, float(max(a["x1"], b["x1"]) - min(a["x2"], b["x2"])))
+        gap_y = max(0.0, float(max(a["y1"], b["y1"]) - min(a["y2"], b["y2"])))
+        return (gap_x ** 2 + gap_y ** 2) ** 0.5
 
     def overlap_ratio(self, other: "Node") -> float:
         """
@@ -87,7 +99,7 @@ class Node:
         return delta_y / other_h
 
 
-# ── Edge ──────────────────────────────────────────────────────────────────────
+                                                                                
 
 @dataclass
 class Edge:
@@ -122,7 +134,7 @@ class Edge:
         }
 
 
-# ── SceneGraph ────────────────────────────────────────────────────────────────
+                                                                                
 
 @dataclass
 class SceneGraph:
@@ -135,7 +147,7 @@ class SceneGraph:
     nodes: list[Node]         = field(default_factory=list)
     edges: list[Edge]         = field(default_factory=list)
 
-    # ── Lookup helpers ────────────────────────────────────────────────────────
+                                                                                
 
     def get_node(self, node_id: str) -> Optional[Node]:
         for n in self.nodes:
@@ -161,7 +173,7 @@ class SceneGraph:
     def verified_edges(self) -> list[Edge]:
         return [e for e in self.edges if e.verified]
 
-    # ── Serialisation ─────────────────────────────────────────────────────────
+                                                                                
 
     def to_dict(self) -> dict:
         """

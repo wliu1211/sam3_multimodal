@@ -7,26 +7,26 @@ from middleware.logger import get_logger
 
 logger = get_logger(__name__)
 
-# ── Config ────────────────────────────────────────────────────────────────────
+                                                                                
 
-# How long a request may wait in the queue before being rejected with 503.
-# Set to slightly less than the frontend's 120s timeout so the client receives
-# a meaningful error message rather than a raw ECONNABORTED.
+                                                                          
+                                                                              
+                                                            
 QUEUE_WAIT_TIMEOUT_S = 100
 
-# ── Global GPU lock ───────────────────────────────────────────────────────────
+                                                                                
 
-# A single asyncio.Lock that every route acquires before touching the GPU.
-# This serializes all vision pipeline calls so SAM 3 and CLIP are never
-# called concurrently — concurrent GPU calls would either crash with an
-# out-of-memory error or produce corrupted results.
-#
-# For a single-user demo this is the right primitive.
-# For multi-user production, replace with a proper task queue (Celery + Redis).
+                                                                          
+                                                                       
+                                                                       
+                                                   
+ 
+                                                     
+                                                                               
 _gpu_lock = asyncio.Lock()
 
 
-# ── Context manager ───────────────────────────────────────────────────────────
+                                                                                
 
 class GpuQueue:
     """
@@ -79,17 +79,17 @@ class GpuQueue:
         _gpu_lock.release()
         logger.debug("[queue] GPU lock released")
 
-        # Flush the CUDA allocator cache so freed tensors are returned to the
-        # device memory pool immediately.  Without this, the cache grows with
-        # every inference call and eventually causes slower allocations or OOM.
+                                                                             
+                                                                             
+                                                                               
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-        # Don't suppress exceptions — let them propagate normally
+                                                                 
         return False
 
 
-# ── Decorator (optional convenience) ─────────────────────────────────────────
+                                                                               
 
 def gpu_queued(func):
     """

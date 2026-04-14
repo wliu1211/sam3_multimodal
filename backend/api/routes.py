@@ -27,23 +27,23 @@ logger = get_logger(__name__)
 
 router = APIRouter()
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+                                                                                
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RESULTS_DIR  = PROJECT_ROOT / "storage" / "results"
 
-# ── Allowed image types ───────────────────────────────────────────────────────
+                                                                                
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp"}
-MAX_IMAGE_BYTES       = 20 * 1024 * 1024  # 20 MB
+MAX_IMAGE_BYTES       = 20 * 1024 * 1024         
 
 
-CACHE_TTL_SECONDS = 600   # 10 minutes — session window for /mask calls
-CACHE_MAX_ENTRIES = 20    # max simultaneous discovery sessions in memory
+CACHE_TTL_SECONDS = 600                                                
+CACHE_MAX_ENTRIES = 20                                                   
 
-# ─────────────────────────────────────────────────────────────────────────────
-# POST /api/query
-# ─────────────────────────────────────────────────────────────────────────────
+                                                                               
+                 
+                                                                               
 
 @router.post("/query", summary="Run a semantic visual query", dependencies=[Depends(rate_limit)])
 async def query(
@@ -68,7 +68,7 @@ async def query(
 
     logger.info(f"[{query_id}] Received query: '{prompt}'")
 
-    # ── 1. Validate upload ────────────────────────────────────────────────────
+                                                                                
 
     if image.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(
@@ -88,7 +88,7 @@ async def query(
     if len(image_bytes) == 0:
         raise HTTPException(status_code=400, detail="Uploaded image file is empty.")
 
-    # ── 2. Parse prompt ───────────────────────────────────────────────────────
+                                                                                
 
     try:
         parsed_query = await parse_prompt(prompt)
@@ -102,7 +102,7 @@ async def query(
         logger.error(f"[{query_id}] Parser failed: {e}")
         raise HTTPException(status_code=422, detail=f"Prompt parsing failed: {e}")
 
-    # ── 3, 4, 5. Vision pipeline (detection + CLIP + SGG + VTT) ──────────────
+                                                                               
 
     models = request.app.state.models
 
@@ -113,18 +113,18 @@ async def query(
         )
 
     try:
-        # GpuQueue is acquired internally by run_vision_pipeline for the
-        # SAM3+CLIP section only. VTT / SGG run outside the GPU lock so
-        # Claude API calls never block other inference requests.
+                                                                        
+                                                                       
+                                                                
         instances, scene_graph = await run_vision_pipeline(
             image_bytes, parsed_query, models
         )
 
-        # Compositional filtering: for multi-class queries (e.g. "man holding
-        # racket"), keep only primary instances that satisfy every required
-        # related class via a verified scene-graph edge (when strong relational
-        # hints are present) or centroid-distance fallback.
-        # Single-class queries (e.g. "persons") pass through unchanged.
+                                                                             
+                                                                           
+                                                                               
+                                                           
+                                                                       
         _img_pil     = Image.open(io.BytesIO(image_bytes))
         _img_w, _img_h = _img_pil.size
         instances = filter_compositional_instances(
@@ -143,7 +143,7 @@ async def query(
         logger.error(f"[{query_id}] Vision pipeline failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Vision pipeline error: {e}")
 
-    # ── 6. Render ─────────────────────────────────────────────────────────────
+                                                                                
 
     groups = build_groups_payload(parsed_query, instances)
 
@@ -154,7 +154,7 @@ async def query(
         logger.error(f"[{query_id}] Renderer failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Rendering error: {e}")
 
-    # ── 7. Log to DB ──────────────────────────────────────────────────────────
+                                                                                
 
     inference_ms  = int((time.time() - start_time) * 1000)
     total_matches = sum(g["matchCount"] for g in groups)
@@ -179,7 +179,7 @@ async def query(
     except Exception as e:
         logger.warning(f"[{query_id}] DB log failed (non-fatal): {e}")
 
-    # ── 8. Response ───────────────────────────────────────────────────────────
+                                                                                
 
     logger.info(f"[{query_id}] Done in {inference_ms}ms — {total_matches} matches")
 
@@ -191,14 +191,14 @@ async def query(
         "annotated_image_url": f"/results/{filename}",
         "inference_ms":        inference_ms,
         "created_at":          _utc_now(),
-        # CHANGED: scene graph added to response
+                                                
         "scene_graph":         scene_graph.to_dict(),
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GET /api/query/:id
-# ─────────────────────────────────────────────────────────────────────────────
+                                                                               
+                    
+                                                                               
 
 @router.get("/query/{query_id}", summary="Fetch a past query result by ID")
 async def get_query(
@@ -222,9 +222,9 @@ async def get_query(
     return JSONResponse(row)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# GET /api/history
-# ─────────────────────────────────────────────────────────────────────────────
+                                                                               
+                  
+                                                                               
 
 @router.get("/history", summary="Paginated query history")
 async def get_history(
@@ -247,16 +247,16 @@ async def get_history(
     return JSONResponse(data)
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+                                                                                
 
 def _utc_now() -> str:
     from datetime import datetime, timezone
     return datetime.now(timezone.utc).isoformat()
 
 
-    # ─────────────────────────────────────────────────────────────────────────────
-# POST /api/analyze  (discovery path — Phase 1 + 1.5)
-# ─────────────────────────────────────────────────────────────────────────────
+                                                                                   
+                                                     
+                                                                               
 
 @router.post("/analyze", summary="Discover all activities in an image", dependencies=[Depends(rate_limit)])
 async def analyze(
@@ -277,7 +277,7 @@ async def analyze(
 
     logger.info(f"[{query_id}] Discovery analysis started")
 
-    # Validate upload
+                     
     if image.content_type not in ALLOWED_CONTENT_TYPES:
         raise HTTPException(status_code=415, detail=f"Unsupported image type '{image.content_type}'.")
     image_bytes = await image.read()
@@ -290,7 +290,7 @@ async def analyze(
     if models.get("sam3") is None:
         raise HTTPException(status_code=503, detail="SAM 3 model is not loaded.")
 
-    # ── Phase 1: Discovery detection ─────────────────────────────────────────
+                                                                               
     try:
         raw_instances, noun_tags, context_tags = await run_discovery_pipeline(
             image_bytes, models
@@ -309,7 +309,7 @@ async def analyze(
             "created_at":   _utc_now(),
         })
 
-    # ── Build nodes for SGG ───────────────────────────────────────────────────
+                                                                                
     image_pil    = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_w, img_h = image_pil.size
 
@@ -324,7 +324,7 @@ async def analyze(
         for inst in raw_instances
     ]
 
-    # ── SGG + VTT ─────────────────────────────────────────────────────────────
+                                                                                
     try:
         scene_graph = build_scene_graph(nodes=nodes, img_w=img_w, img_h=img_h)
         scene_graph = await verify_edges(
@@ -334,7 +334,7 @@ async def analyze(
         logger.error(f"[{query_id}] SGG/VTT failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Scene graph error: {e}")
 
-    # ── Phase 1.5: Activity grouping + label generation ───────────────────────
+                                                                                
     try:
         activity_groups = await build_activity_groups(
             scene_graph  = scene_graph,
@@ -345,7 +345,7 @@ async def analyze(
         logger.error(f"[{query_id}] Activity grouping failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Activity grouping error: {e}")
 
-    # ── Store in discovery cache for /mask ────────────────────────────────────
+                                                                                
     _cache_write(request, query_id, {
         "image_bytes":   image_bytes,
         "raw_instances": raw_instances,
@@ -371,9 +371,9 @@ async def analyze(
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# POST /api/mask  (on-demand rendering for a clicked activity group)
-# ─────────────────────────────────────────────────────────────────────────────
+                                                                               
+                                                                    
+                                                                               
 
 @router.post("/mask", summary="Render masks for a specific activity group")
 async def mask(
@@ -427,7 +427,7 @@ async def mask(
     })
 
 
-# ── Cache helpers ─────────────────────────────────────────────────────────────
+                                                                                
 
 def _cache_write(request: Request, query_id: str, data: dict) -> None:
     """Writes to the discovery cache with TTL and max-entry enforcement."""

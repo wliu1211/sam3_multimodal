@@ -2,11 +2,11 @@ import os
 import json
 from anthropic import AsyncAnthropic
 
-# ── Client ────────────────────────────────────────────────────────────────────
+                                                                                
 
 _client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# ── System prompt ─────────────────────────────────────────────────────────────
+                                                                                
 
 PARSER_SYSTEM_PROMPT = """
 You are a vision query parser. Extract ALL target concepts from the prompt.
@@ -96,7 +96,7 @@ Examples:
   Output: {"targets":[{"base_class":"woman","attributes":{"color":null,"make":null,"type":null,"other":["wearing red jacket"]},"confidence_threshold":0.65,"role":"primary"}],"relational_hints":[]}
 """
 
-# ── Main parse function ───────────────────────────────────────────────────────
+                                                                                
 
 async def parse_prompt(prompt: str) -> dict:
     """
@@ -134,7 +134,7 @@ async def parse_prompt(prompt: str) -> dict:
     return _validate_and_normalise(raw, prompt)
 
 
-# ── Claude call ───────────────────────────────────────────────────────────────
+                                                                                
 
 async def _call_claude(prompt: str) -> str:
     """
@@ -152,7 +152,7 @@ async def _call_claude(prompt: str) -> str:
     return response.content[0].text.strip()
 
 
-# ── Validation ────────────────────────────────────────────────────────────────
+                                                                                
 
 def _validate_and_normalise(raw_json: str, original_prompt: str) -> dict:
     """
@@ -177,7 +177,7 @@ def _validate_and_normalise(raw_json: str, original_prompt: str) -> dict:
 
     raw_targets = data.get("targets", [])
 
-    # Graceful fallback: if the model returned the old single-target shape, wrap it.
+                                                                                    
     if not raw_targets and "base_class" in data:
         raw_targets = [{
             "base_class":           data.get("base_class", "object"),
@@ -208,7 +208,7 @@ def _validate_and_normalise(raw_json: str, original_prompt: str) -> dict:
         role = str(t.get("role") or "primary").lower()
         if role not in ("primary", "related"):
             role = "primary"
-        # Ensure at least one primary target
+                                            
         if role == "primary":
             seen_primary = True
 

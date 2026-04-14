@@ -2,19 +2,19 @@ import aiosqlite
 import os
 from pathlib import Path
 
-# ── Path config ───────────────────────────────────────────────────────────────
+                                                                                
 
-# Resolve db file path relative to project root, not this file's location
+                                                                         
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DB_PATH      = PROJECT_ROOT / "db" / "queries.db"
 
-# Ensure the db/ directory exists before trying to create the file
+                                                                  
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-# ── Schema ────────────────────────────────────────────────────────────────────
+                                                                                
 
-# Single table that logs every query the system processes.
-# Keep it flat — no foreign keys, no joins — SQLite + one table is plenty here.
+                                                          
+                                                                               
 CREATE_QUERY_LOG_TABLE = """
 CREATE TABLE IF NOT EXISTS query_log (
     id              TEXT      PRIMARY KEY,           -- UUID string
@@ -33,12 +33,12 @@ CREATE_INDEXES = [
     "CREATE INDEX IF NOT EXISTS idx_created_at ON query_log (created_at DESC);",
 ]
 
-# Migration statements — safe to run on an existing DB; errors are ignored.
+                                                                           
 MIGRATIONS = [
     "ALTER TABLE query_log ADD COLUMN target_count INTEGER NOT NULL DEFAULT 1;",
 ]
 
-# ── Connection helper ─────────────────────────────────────────────────────────
+                                                                                
 
 async def get_db() -> aiosqlite.Connection:
     """
@@ -51,11 +51,11 @@ async def get_db() -> aiosqlite.Connection:
             ...
     """
     async with aiosqlite.connect(DB_PATH) as db:
-        # Return rows as dict-like objects so columns are accessible by name
+                                                                            
         db.row_factory = aiosqlite.Row
         yield db
 
-# ── Initialisation ────────────────────────────────────────────────────────────
+                                                                                
 
 async def init_db() -> None:
     """
@@ -74,7 +74,7 @@ async def init_db() -> None:
             try:
                 await db.execute(migration_sql)
             except Exception:
-                pass  # Column already exists — safe to ignore
+                pass                                          
         await db.commit()
 
     print(f"[db] SQLite ready at {DB_PATH}")

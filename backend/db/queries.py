@@ -3,7 +3,7 @@ import aiosqlite
 from datetime import datetime, timezone
 from typing import Optional
 
-# ── Write ─────────────────────────────────────────────────────────────────────
+                                                                                
 
 async def insert_query_log(
     db:            aiosqlite.Connection,
@@ -46,7 +46,7 @@ async def insert_query_log(
     await db.commit()
 
 
-# ── Read ──────────────────────────────────────────────────────────────────────
+                                                                                
 
 async def fetch_query_by_id(
     db: aiosqlite.Connection,
@@ -76,12 +76,12 @@ async def fetch_query_history(
     """
     offset = (page - 1) * page_size
 
-    # Total count for pagination metadata
+                                         
     async with db.execute("SELECT COUNT(*) FROM query_log") as cursor:
         count_row = await cursor.fetchone()
         total = count_row[0] if count_row else 0
 
-    # Paginated results
+                       
     async with db.execute(
         """
         SELECT * FROM query_log
@@ -100,7 +100,7 @@ async def fetch_query_history(
     }
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+                                                                                
 
 def row_to_dict(row: aiosqlite.Row) -> dict:
     """
@@ -113,6 +113,6 @@ def row_to_dict(row: aiosqlite.Row) -> dict:
             d["parsed_attrs"] = json.loads(d["parsed_attrs"])
         except (json.JSONDecodeError, TypeError):
             d["parsed_attrs"] = {}
-    # Ensure target_count has a sensible default for rows written by older code
+                                                                               
     d.setdefault("target_count", 1)
     return d

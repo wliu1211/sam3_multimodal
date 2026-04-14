@@ -5,9 +5,9 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 
-# Must run before any custom imports so that modules like parser.py and
-# vision.py can read ANTHROPIC_API_KEY from the environment at import time
-# when they instantiate their Anthropic clients at module level.
+                                                                       
+                                                                          
+                                                                
 load_dotenv()
 
 from fastapi import FastAPI
@@ -20,7 +20,7 @@ from middleware.logger import log_requests, get_logger
 
 logger = get_logger(__name__)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+                                                                                
 
 PROJECT_ROOT  = Path(__file__).resolve().parents[1]
 RESULTS_DIR   = PROJECT_ROOT / "storage" / "results"
@@ -28,18 +28,18 @@ UPLOADS_DIR   = PROJECT_ROOT / "storage" / "uploads"
 MODELS_DIR    = PROJECT_ROOT / "models"
 LOGS_DIR      = PROJECT_ROOT / "logs"
 
-# Ensure all runtime directories exist on startup
+                                                 
 for directory in [RESULTS_DIR, UPLOADS_DIR, LOGS_DIR]:
     directory.mkdir(parents=True, exist_ok=True)
 
-# ── Model store ───────────────────────────────────────────────────────────────
+                                                                                
 
-# Global dict that holds loaded model instances.
-# Routes access models via request.app.state.models["sam3"] etc.
-# Loading here (once at startup) rather than per-request saves ~15s per query.
+                                                
+                                                                
+                                                                              
 models: dict = {}
 
-# ── Lifespan ──────────────────────────────────────────────────────────────────
+                                                                                
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -53,11 +53,11 @@ async def lifespan(app: FastAPI):
       3. Load CLIP model weights into memory
     """
 
-    # 1. Database
+                 
     print("[startup] Initialising database...")
     await init_db()
 
-    # 2. SAM 3
+              
     logger.info("[startup] Loading SAM 3...")
     t0 = time.time()
     try:
@@ -73,16 +73,16 @@ async def lifespan(app: FastAPI):
                 "Run: python scripts/download_models.py"
             )
 
-        # sam3 is a namespace package (__file__ is None), so derive the assets
-        # path from model_builder.__file__ which has a real file path.
+                                                                              
+                                                                      
         bpe_path = _Path(build_sam3_image_model.__module__.replace(".", "/")).parent
         bpe_path = _Path(build_sam3_image_model.__code__.co_filename).parent / "assets" / "bpe_simple_vocab_16e6.txt.gz"
         def get_device() -> str:
             if torch.cuda.is_available():
                 return "cuda"
-            # MPS (Apple Silicon) is skipped — SAM3's vision_backbone has
-            # submodules that initialize weights on CPU and are never moved,
-            # causing an MPSFloatType vs torch.FloatTensor mismatch at inference.
+                                                                         
+                                                                            
+                                                                                 
             return "cpu"
 
         device = get_device()
@@ -94,11 +94,11 @@ async def lifespan(app: FastAPI):
             checkpoint_path = str(sam3_checkpoint),
             load_from_HF    = False,
         )
-        # Checkpoint weights are often bfloat16; without a single global autocast
-        # policy, SAM 3 can mix dtypes internally and hit "BFloat16 and Float"
-        # matmul errors on both CPU and CUDA. Float32 everywhere avoids that.
+                                                                                 
+                                                                              
+                                                                             
         sam3_model = sam3_model.float()
-        # Store the Sam3Processor — this is what vision.py uses
+                                                               
         models["sam3"] = Sam3Processor(sam3_model, device=device)
         logger.info(f"[startup] SAM 3 loaded in {time.time() - t0:.1f}s on {device}")
 
@@ -106,7 +106,7 @@ async def lifespan(app: FastAPI):
         logger.warning(f"[startup] SAM 3 failed to load — {e}")
         models["sam3"] = None
 
-    # 3. CLIP
+             
     print("[startup] Loading CLIP...")
     t1 = time.time()
     try:
@@ -131,7 +131,7 @@ async def lifespan(app: FastAPI):
         print(f"[startup] WARNING: CLIP failed to load — {e}")
         models["clip"] = None
     
-    # 4. RAM++ (for discovery mode)
+                                   
     logger.info("[startup] Loading RAM++...")
     t2 = time.time()
     try:
@@ -163,33 +163,33 @@ async def lifespan(app: FastAPI):
         logger.warning(f"[startup] RAM++ failed to load — {e}")
         models["ram"] = None
 
-    # Make models accessible via app.state
+                                          
     app.state.models = models
     app.state.discovery_cache = {}
 
     gpu_status = "GPU" if torch.cuda.is_available() else "CPU"
     print(f"[startup] Server ready · {gpu_status} · SAM3={'✓' if models.get('sam3') else '✗'} · CLIP={'✓' if models.get('clip') else '✗'} · RAM++={'✓' if models.get('ram') else '✗'}")
 
-    yield  # Server is now running and accepting requests
+    yield                                                
 
-    # Teardown
+              
     print("[shutdown] Cleaning up...")
     models.clear()
 
 
-# ── App ───────────────────────────────────────────────────────────────────────
+                                                                                
 
 app = FastAPI(
-    title="Semantic Visual Query",
+    title="Multimodel Visual Query",
     description="Natural language object detection and segmentation using SAM 3 + CLIP.",
     version="1.0.0",
     lifespan=lifespan,
 )
 
-# ── CORS ──────────────────────────────────────────────────────────────────────
+                                                                                
 
-# In development, Vite runs on port 5173.
-# In production, replace with your actual deployed frontend URL.
+                                         
+                                                                
 ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",")
 
 app.add_middleware(
@@ -200,26 +200,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Log every HTTP request + response status and duration
+                                                       
 app.middleware("http")(log_requests)
 
-# ── Static files ──────────────────────────────────────────────────────────────
 
-# Serves annotated result images directly to the React frontend.
-# e.g. GET /results/abc123.jpg → storage/results/abc123.jpg
 app.mount(
     "/results",
     StaticFiles(directory=str(RESULTS_DIR)),
     name="results",
 )
 
-# ── Routes ────────────────────────────────────────────────────────────────────
 
-# All API routes are defined in api/routes.py and registered under /api prefix
 app.include_router(router, prefix="/api")
 
 
-# ── Health check ─────────────────────────────────────────────────────────────
 
 @app.get("/api/health", tags=["meta"])
 async def health():

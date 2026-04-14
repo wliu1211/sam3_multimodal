@@ -21,31 +21,15 @@ from typing import Optional
 
 from services.graph import Node
 from services.vision import _score_with_clip, _crop_instance, _encode_mask_rle
-from middleware.queue import GpuQueue
-
-# ── Config ────────────────────────────────────────────────────────────────────
-
-# Hard cap on SAM 3 calls.  Each call costs ~500ms on M4 / ~200ms on GPU.
-# 8 concepts × 500ms = 4s worst case — acceptable for a demo.
+from middleware.queue import GpuQueue                                                                      
+                                                             
 MAX_CONCEPTS = 8
-
-# Mask-IoU threshold above which two detected instances are considered the same
-# physical object and the lower-confidence one is dropped.
 IOU_DEDUP_THRESHOLD = 0.60
-
-# CLIP confidence below which a detection is dropped entirely.
-# Set low (0.35) to be permissive; only junk SAM detections fall below this.
 CLIP_DROP_THRESHOLD = 0.35
-
-# Weight given to CLIP score when blending with SAM score for final confidence.
-# 0.55 CLIP + 0.45 SAM gives CLIP the edge while still valuing SAM's spatial
-# precision for objects that are hard to describe in text.
+                  
 CLIP_SAM_BLEND = 0.55
-
-# Tags that RAM++ commonly returns which are NOT physical objects SAM can locate.
-# Verbs, adjectives, scene descriptors, and abstract nouns.
 SKIP_TAGS: set[str] = {
-    # actions / verbs
+                     
     "walk", "walking", "run", "running", "sit", "sitting", "stand", "standing",
     "lay", "laying", "lie", "lying", "play", "playing", "swim", "swimming",
     "jump", "jumping", "ride", "riding", "hold", "holding", "carry", "carrying",
@@ -53,28 +37,28 @@ SKIP_TAGS: set[str] = {
     "look", "looking", "wear", "wearing", "smile", "smiling", "wave", "waving",
     "climb", "climbing", "throw", "throwing", "catch", "catching", "kick",
     "hit", "swing", "swinging", "surf", "surfing", "dive", "diving",
-    # pure colors (not locatable as standalone objects)
+                                                       
     "red", "blue", "green", "yellow", "white", "black", "brown", "gray",
     "grey", "orange", "purple", "pink", "beige", "tan", "teal", "gold",
     "silver", "dark", "light", "bright",
-    # scene / atmosphere
+                        
     "indoor", "outdoor", "inside", "outside", "urban", "rural", "nature",
     "sunny", "cloudy", "foggy", "rainy", "warm", "cold", "hot", "cool",
     "bright", "dark", "daytime", "nighttime", "morning", "evening",
     "busy", "quiet", "crowded", "empty", "open", "close",
-    # abstract / non-locatable
+                              
     "sport", "sports", "activity", "recreation", "competition", "game",
     "fun", "happy", "sad", "excited", "relaxed", "comfortable",
     "home", "life", "style", "fashion", "design", "art",
     "large", "small", "big", "tiny", "tall", "short", "wide", "narrow",
     "old", "new", "young", "fresh", "clean", "dirty",
-    # compound scene words
+                          
     "living room", "dining room", "bedroom", "bathroom", "kitchen",
     "city street", "country road", "open field",
 }
 
-# Synonym normalisation — map RAM++ variants to a single canonical form
-# that SAM 3 handles best. Keeps the concept list clean before dedup.
+                                                                       
+                                                                     
 SYNONYM_MAP: dict[str, str] = {
     "sofa":          "couch",
     "automobile":    "car",
@@ -96,14 +80,12 @@ SYNONYM_MAP: dict[str, str] = {
     "rubbish":       "trash can",
     "trainers":      "sneakers",
     "jumper":        "sweater",
-    "football":      "soccer ball",    # avoids SAM confusion with american football
+    "football":      "soccer ball",                                                 
     "american football": "football",
-    "pickleball":    "pickleball",     # keep as-is — specific enough
+    "pickleball":    "pickleball",                                   
 }
 
-# Tags that hint at related physical objects even though they're verbs.
-# We keep these as context_tags (for label generation) but also add the
-# implied object to the concept list if not already present.
+
 VERB_TO_OBJECT_HINTS: dict[str, list[str]] = {
     "surfing":    ["surfboard"],
     "skateboarding": ["skateboard"],
@@ -115,7 +97,7 @@ VERB_TO_OBJECT_HINTS: dict[str, list[str]] = {
 }
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+
 
 async def run_discovery_pipeline(
     image_bytes: bytes,
@@ -133,13 +115,13 @@ async def run_discovery_pipeline(
 
     image_pil = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-    # ── Step 1: RAM++ tagging ─────────────────────────────────────────────────
+                                                                                
     raw_tags = _run_ram(image_pil, models)
 
-    # ── Step 2: Filter and normalise ─────────────────────────────────────────
+                                                                               
     noun_tags, context_tags = _filter_tags(raw_tags)
 
-    # ── Step 3: Cap to MAX_CONCEPTS ──────────────────────────────────────────
+                                                                               
     noun_tags = noun_tags[:MAX_CONCEPTS]
 
     if not noun_tags:
@@ -147,27 +129,27 @@ async def run_discovery_pipeline(
 
     img_w, img_h = image_pil.size
 
-    # ── Steps 4–6: SAM 3 + dedup + CLIP (GPU-serialised) ─────────────────────
+                                                                               
     async with GpuQueue():
-        # Step 4: multi-class SAM 3 detection
+                                             
         all_raw_instances: list[dict] = []
         for concept in noun_tags:
             concept_instances = _detect_concept(image_pil, concept, models)
             all_raw_instances.extend(concept_instances)
 
-        # Step 5: mask-IoU deduplication
+                                        
         deduped = _dedup_by_iou(all_raw_instances, img_w, img_h)
 
-        # Step 6: CLIP confidence verification
-        # Scores each instance crop against its own label. Drops obvious
-        # false positives (score < CLIP_DROP_THRESHOLD) and blends CLIP
-        # confidence with the SAM score for a more reliable final confidence.
+                                              
+                                                                        
+                                                                       
+                                                                             
         deduped = _clip_verify_instances(deduped, image_pil, img_w, img_h, models)
 
     return deduped, noun_tags, context_tags
 
 
-# ── RAM++ ─────────────────────────────────────────────────────────────────────
+                                                                                
 
 def _run_ram(image_pil: Image.Image, models: dict) -> list[str]:
     """
@@ -182,25 +164,22 @@ def _run_ram(image_pil: Image.Image, models: dict) -> list[str]:
         import torch
         from ram import inference_ram, get_transform
 
-        # Preprocess: resize to 384×384, normalise, add batch dim
+                                                                 
         transform = get_transform(image_size=384)
         image_tensor = transform(image_pil).unsqueeze(0)
 
-        # Move to the same device as the RAM++ model weights
+                                                            
         device = next(ram.parameters()).device
         image_tensor = image_tensor.to(device)
 
-        # inference_ram returns (en_tags_str, zh_tags_str)
+                                                          
         tags_str, _ = inference_ram(image_tensor, ram)
 
-        # Tags are pipe-separated: "person | beach | racket | ..."
+                                                                  
         return [t.strip().lower() for t in tags_str.split("|") if t.strip()]
     except Exception as e:
         print(f"[discovery] RAM++ inference failed: {e}")
         return []
-
-
-# ── Tag filtering ─────────────────────────────────────────────────────────────
 
 def _filter_tags(raw_tags: list[str]) -> tuple[list[str], list[str]]:
     """
@@ -214,7 +193,7 @@ def _filter_tags(raw_tags: list[str]) -> tuple[list[str], list[str]]:
     context_tags: list[str] = []
     seen:         set[str]  = set()
 
-    # Collect implied objects from verb hints first
+                                                   
     implied: list[str] = []
     for tag in raw_tags:
         if tag in VERB_TO_OBJECT_HINTS:
@@ -224,7 +203,7 @@ def _filter_tags(raw_tags: list[str]) -> tuple[list[str], list[str]]:
     all_tags = raw_tags + implied
 
     for tag in all_tags:
-        # Normalise synonym
+                           
         tag = SYNONYM_MAP.get(tag, tag)
 
         if tag in seen:
@@ -232,25 +211,22 @@ def _filter_tags(raw_tags: list[str]) -> tuple[list[str], list[str]]:
         seen.add(tag)
 
         if tag in SKIP_TAGS:
-            # Keep as context if it's a verb or atmosphere word
+                                                               
             if tag not in context_tags:
                 context_tags.append(tag)
             continue
 
-        # Drop multi-word tags longer than 3 words (too compound for SAM)
+                                                                         
         if len(tag.split()) > 3:
             continue
 
-        # Drop single characters or pure numbers
+                                                
         if len(tag) <= 1 or tag.isdigit():
             continue
 
         noun_tags.append(tag)
 
     return noun_tags, context_tags
-
-
-# ── Single-concept SAM 3 detection ───────────────────────────────────────────
 
 def _detect_concept(
     image_pil:  Image.Image,
@@ -294,9 +270,6 @@ def _detect_concept(
     except Exception as e:
         print(f"[discovery] SAM 3 failed for concept '{concept}': {e}")
         return []
-
-
-# ── IoU deduplication ─────────────────────────────────────────────────────────
 
 def _dedup_by_iou(instances: list[dict], img_w: int, img_h: int) -> list[dict]:
     """
@@ -344,9 +317,6 @@ def _dedup_by_iou(instances: list[dict], img_w: int, img_h: int) -> list[dict]:
         })
     return result
 
-
-# ── CLIP verification ─────────────────────────────────────────────────────────
-
 def _clip_verify_instances(
     instances: list[dict],
     image_pil: Image.Image,
@@ -387,7 +357,7 @@ def _clip_verify_instances(
     return verified
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+                                                                                
 
 def _mask_iou(a: np.ndarray, b: np.ndarray) -> float:
     """Pixel-level intersection-over-union for two uint8 (H, W) binary masks."""

@@ -1,320 +1,206 @@
-// CHANGED: added Edge to the import
 import type { MaskGroup, DecodedMask, BoundingBox, Edge, SceneGraphNode } from "../types/mask";
 import { hexToRgba, darkenHex } from "./colorUtils";
-
-// Per-edge-pair color palette — intentionally different from the group palette
-// so relation masks are visually distinct from normal class-colored masks.
 const RELATION_PALETTE = [
-  "#60A5FA", // blue
-  "#F59E0B", // amber
-  "#10B981", // emerald
-  "#EC4899", // pink
-  "#8B5CF6", // violet
-  "#F97316", // orange
-  "#06B6D4", // cyan
-  "#84CC16", // lime
+    "#60A5FA",
+    "#F59E0B",
+    "#10B981",
+    "#EC4899",
+    "#8B5CF6",
+    "#F97316",
+    "#06B6D4",
+    "#84CC16",
 ];
-
-
-const MASK_ALPHA       = 0.45;
-const BORDER_ALPHA     = 0.9;
-const BORDER_WIDTH     = 2;
-const LABEL_FONT       = "600 12px 'JetBrains Mono', monospace";
-const LABEL_PADDING    = 4;
-const LABEL_OFFSET_Y   = -6;
-
-// NEW: edge drawing constants
-const EDGE_LINE_WIDTH  = 1.5;
-const EDGE_FONT        = "500 11px 'JetBrains Mono', monospace";
-const EDGE_LABEL_PAD   = 3;
-const EDGE_DOT_RADIUS  = 3;
-
-/**
- * Decodes a run-length encoded (RLE) mask into a flat Uint8Array.
- * RLE format: alternating [background_count, foreground_count, ...]
- * starting from the top-left pixel, row-major order.
- */
+const MASK_ALPHA = 0.45;
+const BORDER_ALPHA = 0.9;
+const BORDER_WIDTH = 2;
+const LABEL_FONT = "600 12px 'JetBrains Mono', monospace";
+const LABEL_PADDING = 4;
+const LABEL_OFFSET_Y = -6;
+const EDGE_LINE_WIDTH = 1.5;
+const EDGE_FONT = "500 11px 'JetBrains Mono', monospace";
+const EDGE_LABEL_PAD = 3;
+const EDGE_DOT_RADIUS = 3;
 export function decodeRleMask(rle: number[], width: number, height: number): DecodedMask {
-  const data = new Uint8Array(width * height);
-  let pixel = 0;
-  let value = 0; // starts with background (0)
-  for (const count of rle) {
-    data.fill(value, pixel, pixel + count);
-    pixel += count;
-    value = value === 0 ? 1 : 0;
-  }
-  return { data, width, height };
-}
-
-/**
- * Draws a semi-transparent color fill onto the canvas for every pixel
- * where the mask is 1. Operates on a pre-existing ImageData pixel buffer
- * for performance (batch write, single putImageData).
- */
-export function paintMask(
-  imageData: ImageData,
-  mask: DecodedMask,
-  color: string,
-): void {
-  const [r, g, b] = hexToRgba(color, MASK_ALPHA);
-  const d = imageData.data;
-  for (let i = 0; i < mask.data.length; i++) {
-    if (mask.data[i] !== 1) continue;
-    const px = i * 4;
-    const a = MASK_ALPHA;
-    d[px]     = Math.round(r * a + d[px]     * (1 - a));
-    d[px + 1] = Math.round(g * a + d[px + 1] * (1 - a));
-    d[px + 2] = Math.round(b * a + d[px + 2] * (1 - a));
-  }
-}
-
-/**
- * Draws a bounding box and label badge for a single instance.
- */
-export function drawBoundingBox(
-  ctx: CanvasRenderingContext2D,
-  box: BoundingBox,
-  label: string,
-  color: string,
-  confidence: number,
-): void {
-  const borderColor = darkenHex(color, 10);
-  const w = box.x2 - box.x1;
-  const h = box.y2 - box.y1;
-
-  ctx.strokeStyle = borderColor;
-  ctx.globalAlpha = BORDER_ALPHA;
-  ctx.lineWidth   = BORDER_WIDTH;
-  ctx.strokeRect(box.x1, box.y1, w, h);
-  ctx.globalAlpha = 1;
-
-  const badgeText = `${label} ${Math.round(confidence * 100)}%`;
-  ctx.font = LABEL_FONT;
-  const textWidth = ctx.measureText(badgeText).width;
-  const badgeW = textWidth + LABEL_PADDING * 2;
-  const badgeH = 18;
-  const badgeX = box.x1;
-  const badgeY = box.y1 + LABEL_OFFSET_Y - badgeH;
-
-  ctx.fillStyle = borderColor;
-  ctx.globalAlpha = 0.85;
-  roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 3);
-  ctx.fill();
-  ctx.globalAlpha = 1;
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillText(badgeText, badgeX + LABEL_PADDING, badgeY + badgeH - LABEL_PADDING - 1);
-}
-
-// ── NEW: drawEdges ─────────────────────────────────────────────────────────────
-
-/**
- * Draws relationship lines between matched instance centroids.
- *
- * Derives centroid coordinates from MaskGroup → MaskInstance → boundingBox
- * so no extra props need to be passed — the groups data already in scope
- * is sufficient. Builds an id → centroid lookup, then draws a line for
- * each verified edge with a predicate label badge at the midpoint.
- *
- * Line opacity scales with edge confidence: high-confidence edges are
- * more opaque and therefore more prominent.
- * Downgraded edges are prefixed with "~" to signal they were inferred
- * from a weaker version of the original predicted predicate.
- */
-export function drawEdges(
-  ctx:    CanvasRenderingContext2D,
-  groups: MaskGroup[],
-  edges:  Edge[],
-): void {
-  if (edges.length === 0) return;
-
-  // Build id → centroid from all instances in all groups
-  const centroids = new Map<string, { x: number; y: number }>();
-  for (const group of groups) {
-    for (const inst of group.instances) {
-      const b = inst.boundingBox;
-      centroids.set(inst.id, {
-        x: (b.x1 + b.x2) / 2,
-        y: (b.y1 + b.y2) / 2,
-      });
+    const data = new Uint8Array(width * height);
+    let pixel = 0;
+    let value = 0;
+    for (const count of rle) {
+        data.fill(value, pixel, pixel + count);
+        pixel += count;
+        value = value === 0 ? 1 : 0;
     }
-  }
-
-  for (const edge of edges) {
-    const sub = centroids.get(edge.subjectId);
-    const obj = centroids.get(edge.objectId);
-    if (!sub || !obj) continue;
-
-    // Opacity scaled by confidence, floored at 0.25 for readability
-    const alpha = Math.max(0.25, Math.min(1.0, edge.confidence));
-
-    // ── Draw relationship line ──────────────────────────────────────────────
-    ctx.save();
-    ctx.globalAlpha = alpha;
-    ctx.strokeStyle = "rgba(220, 220, 220, 1)";
-    ctx.lineWidth   = EDGE_LINE_WIDTH;
-    ctx.setLineDash([5, 4]);    // dashed so it doesn't compete with mask borders
-    ctx.beginPath();
-    ctx.moveTo(sub.x, sub.y);
-    ctx.lineTo(obj.x, obj.y);
-    ctx.stroke();
-    ctx.setLineDash([]);
-
-    // ── Endpoint dots ───────────────────────────────────────────────────────
-    ctx.fillStyle = "rgba(220, 220, 220, 1)";
-    ctx.beginPath();
-    ctx.arc(sub.x, sub.y, EDGE_DOT_RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(obj.x, obj.y, EDGE_DOT_RADIUS, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-
-    // ── Predicate label badge at midpoint ───────────────────────────────────
-    const midX = (sub.x + obj.x) / 2;
-    const midY = (sub.y + obj.y) / 2;
-
-    // Prefix downgraded predicates with ~ to show they were inferred weakly
-    const predText  = `${edge.downgraded ? "~" : ""}${edge.predicate.replace(/_/g, " ")}`;
-    const confText  = ` ${Math.round(edge.confidence * 100)}%`;
-    const badgeText = predText + confText;
-
-    ctx.font = EDGE_FONT;
-    const textW  = ctx.measureText(badgeText).width;
-    const badgeW = textW + EDGE_LABEL_PAD * 2;
-    const badgeH = 16;
-    const badgeX = midX - badgeW / 2;
-    const badgeY = midY - badgeH / 2;
-
-    // Semi-transparent dark background
-    ctx.save();
-    ctx.globalAlpha = 0.80;
-    ctx.fillStyle = "#1a1a2a";
+    return { data, width, height };
+}
+export function paintMask(imageData: ImageData, mask: DecodedMask, color: string): void {
+    const [r, g, b] = hexToRgba(color, MASK_ALPHA);
+    const d = imageData.data;
+    for (let i = 0; i < mask.data.length; i++) {
+        if (mask.data[i] !== 1)
+            continue;
+        const px = i * 4;
+        const a = MASK_ALPHA;
+        d[px] = Math.round(r * a + d[px] * (1 - a));
+        d[px + 1] = Math.round(g * a + d[px + 1] * (1 - a));
+        d[px + 2] = Math.round(b * a + d[px + 2] * (1 - a));
+    }
+}
+export function drawBoundingBox(ctx: CanvasRenderingContext2D, box: BoundingBox, label: string, color: string, confidence: number): void {
+    const borderColor = darkenHex(color, 10);
+    const w = box.x2 - box.x1;
+    const h = box.y2 - box.y1;
+    ctx.strokeStyle = borderColor;
+    ctx.globalAlpha = BORDER_ALPHA;
+    ctx.lineWidth = BORDER_WIDTH;
+    ctx.strokeRect(box.x1, box.y1, w, h);
+    ctx.globalAlpha = 1;
+    const badgeText = `${label} ${Math.round(confidence * 100)}%`;
+    ctx.font = LABEL_FONT;
+    const textWidth = ctx.measureText(badgeText).width;
+    const badgeW = textWidth + LABEL_PADDING * 2;
+    const badgeH = 18;
+    const badgeX = box.x1;
+    const badgeY = box.y1 + LABEL_OFFSET_Y - badgeH;
+    ctx.fillStyle = borderColor;
+    ctx.globalAlpha = 0.85;
     roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 3);
     ctx.fill();
     ctx.globalAlpha = 1;
-
-    // Label text
-    ctx.fillStyle = "#e0e0e0";
-    ctx.fillText(
-      badgeText,
-      badgeX + EDGE_LABEL_PAD,
-      badgeY + badgeH - EDGE_LABEL_PAD - 2,
-    );
-    ctx.restore();
-  }
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(badgeText, badgeX + LABEL_PADDING, badgeY + badgeH - LABEL_PADDING - 1);
 }
-
-
-// ── drawRelationMasks ─────────────────────────────────────────────────────────
-/**
- * Relation-mask mode: for each verified edge, paints the subject AND object
- * masks with the same per-pair color so the two objects read as one visual
- * unit. Each edge pair gets a distinct color from RELATION_PALETTE.
- *
- * Only the objects involved in edges are highlighted — other detected objects
- * are intentionally left un-masked so the relationship pairs stand out clearly.
- */
-export function drawRelationMasks(
-  ctx:    CanvasRenderingContext2D,
-  canvas: HTMLCanvasElement,
-  nodes:  SceneGraphNode[],
-  edges:  Edge[],
-): void {
-  if (edges.length === 0 || nodes.length === 0) return;
-  const nodeMap = new Map<string, SceneGraphNode>();
-  for (const node of nodes) nodeMap.set(node.id, node);
-  // Paint all mask fills in one ImageData pass
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  edges.forEach((edge, i) => {
-    const color   = RELATION_PALETTE[i % RELATION_PALETTE.length];
-    const subject = nodeMap.get(edge.subjectId);
-    const obj     = nodeMap.get(edge.objectId);
-    if (subject) {
-      paintMask(imageData, decodeRleMask(subject.maskRle, canvas.width, canvas.height), color);
+export function drawEdges(ctx: CanvasRenderingContext2D, groups: MaskGroup[], edges: Edge[], nodes: SceneGraphNode[] = []): void {
+    if (edges.length === 0)
+        return;
+    const centroids = new Map<string, {
+        x: number;
+        y: number;
+    }>();
+    for (const group of groups) {
+        for (const inst of group.instances) {
+            const b = inst.boundingBox;
+            centroids.set(inst.id, {
+                x: (b.x1 + b.x2) / 2,
+                y: (b.y1 + b.y2) / 2,
+            });
+        }
     }
-    if (obj) {
-      paintMask(imageData, decodeRleMask(obj.maskRle, canvas.width, canvas.height), color);
+    for (const node of nodes) {
+        if (!centroids.has(node.id)) {
+            centroids.set(node.id, {
+                x: (node.boundingBox.x1 + node.boundingBox.x2) / 2,
+                y: (node.boundingBox.y1 + node.boundingBox.y2) / 2,
+            });
+        }
     }
-  });
-  ctx.putImageData(imageData, 0, 0);
-  // Draw bounding boxes with the matching per-pair color
-  edges.forEach((edge, i) => {
-    const color   = RELATION_PALETTE[i % RELATION_PALETTE.length];
-    const subject = nodeMap.get(edge.subjectId);
-    const obj     = nodeMap.get(edge.objectId);
-    if (subject) drawBoundingBox(ctx, subject.boundingBox, subject.label, color, subject.confidence);
-    if (obj)     drawBoundingBox(ctx, obj.boundingBox,     obj.label,     color, obj.confidence);
-  });
+    for (const edge of edges) {
+        const sub = centroids.get(edge.subjectId);
+        const obj = centroids.get(edge.objectId);
+        if (!sub || !obj)
+            continue;
+        const alpha = Math.max(0.25, Math.min(1.0, edge.confidence));
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.strokeStyle = "rgba(220, 220, 220, 1)";
+        ctx.lineWidth = EDGE_LINE_WIDTH;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(sub.x, sub.y);
+        ctx.lineTo(obj.x, obj.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = "rgba(220, 220, 220, 1)";
+        ctx.beginPath();
+        ctx.arc(sub.x, sub.y, EDGE_DOT_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(obj.x, obj.y, EDGE_DOT_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        const midX = (sub.x + obj.x) / 2;
+        const midY = (sub.y + obj.y) / 2;
+        const predText = `${edge.downgraded ? "~" : ""}${edge.predicate.replace(/_/g, " ")}`;
+        const confText = ` ${Math.round(edge.confidence * 100)}%`;
+        const badgeText = predText + confText;
+        ctx.font = EDGE_FONT;
+        const textW = ctx.measureText(badgeText).width;
+        const badgeW = textW + EDGE_LABEL_PAD * 2;
+        const badgeH = 16;
+        const badgeX = midX - badgeW / 2;
+        const badgeY = midY - badgeH / 2;
+        ctx.save();
+        ctx.globalAlpha = 0.80;
+        ctx.fillStyle = "#1a1a2a";
+        roundRect(ctx, badgeX, badgeY, badgeW, badgeH, 3);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = "#e0e0e0";
+        ctx.fillText(badgeText, badgeX + EDGE_LABEL_PAD, badgeY + badgeH - EDGE_LABEL_PAD - 2);
+        ctx.restore();
+    }
 }
-
-
-// ── renderAllGroups ────────────────────────────────────────────────────────────
-
-/**
- * Full render pass: paints all mask groups onto a canvas in order.
- * 1. Draws the source image
- * 2. Applies mask fills via ImageData (one putImageData pass for all groups)
- * 3. Draws bounding boxes and labels on top
- * 4. NEW: draws scene graph relationship edges if showEdges is true
- */
-export function renderAllGroups(
-  ctx:               CanvasRenderingContext2D,
-  canvas:            HTMLCanvasElement,
-  img:               HTMLImageElement,
-  groups:            MaskGroup[],
-  showMasks:         boolean,
-  edges:             Edge[]           = [],
-  showEdges:         boolean          = false,
-  nodes:             SceneGraphNode[] = [],
-  showRelationMasks: boolean          = false,
-): void {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-  if (showRelationMasks && edges.length > 0 && nodes.length > 0) {
-    // Relation-mask mode: highlight only the edge-paired objects, one color per pair.
-    drawRelationMasks(ctx, canvas, nodes, edges);
-  } else if (showMasks && groups.length > 0) {
-    // Normal mask mode: paint all detected groups with their class colors.
+export function drawRelationMasks(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, nodes: SceneGraphNode[], edges: Edge[]): void {
+    if (edges.length === 0 || nodes.length === 0)
+        return;
+    const nodeMap = new Map<string, SceneGraphNode>();
+    for (const node of nodes)
+        nodeMap.set(node.id, node);
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    for (const group of groups) {
-      for (const instance of group.instances) {
-        paintMask(imageData, decodeRleMask(instance.maskRle, canvas.width, canvas.height), group.color);
-      }
-    }
+    edges.forEach((edge, i) => {
+        const color = RELATION_PALETTE[i % RELATION_PALETTE.length];
+        const subject = nodeMap.get(edge.subjectId);
+        const obj = nodeMap.get(edge.objectId);
+        if (subject) {
+            paintMask(imageData, decodeRleMask(subject.maskRle, canvas.width, canvas.height), color);
+        }
+        if (obj) {
+            paintMask(imageData, decodeRleMask(obj.maskRle, canvas.width, canvas.height), color);
+        }
+    });
     ctx.putImageData(imageData, 0, 0);
-
-    for (const group of groups) {
-      for (const instance of group.instances) {
-        drawBoundingBox(ctx, instance.boundingBox, group.label, group.color, instance.confidence);
-      }
-    }
-  }
-
-// Edge lines always drawn on top regardless of mask mode
-  if (showEdges && edges.length > 0) {
-    drawEdges(ctx, groups, edges);
-  }
+    edges.forEach((edge, i) => {
+        const color = RELATION_PALETTE[i % RELATION_PALETTE.length];
+        const subject = nodeMap.get(edge.subjectId);
+        const obj = nodeMap.get(edge.objectId);
+        if (subject)
+            drawBoundingBox(ctx, subject.boundingBox, subject.label, color, subject.confidence);
+        if (obj)
+            drawBoundingBox(ctx, obj.boundingBox, obj.label, color, obj.confidence);
+    });
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function roundRect(
-  ctx: CanvasRenderingContext2D,
-  x: number, y: number,
-  w: number, h: number,
-  r: number,
-): void {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
+export function renderAllGroups(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, img: HTMLImageElement, groups: MaskGroup[], showMasks: boolean, edges: Edge[] = [], showEdges: boolean = false, nodes: SceneGraphNode[] = [], showRelationMasks: boolean = false): void {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    if (showRelationMasks && edges.length > 0 && nodes.length > 0) {
+        drawRelationMasks(ctx, canvas, nodes, edges);
+    }
+    else if (showMasks && groups.length > 0) {
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        for (const group of groups) {
+            for (const instance of group.instances) {
+                paintMask(imageData, decodeRleMask(instance.maskRle, canvas.width, canvas.height), group.color);
+            }
+        }
+        ctx.putImageData(imageData, 0, 0);
+        for (const group of groups) {
+            for (const instance of group.instances) {
+                drawBoundingBox(ctx, instance.boundingBox, group.label, group.color, instance.confidence);
+            }
+        }
+    }
+    if (showEdges && edges.length > 0) {
+        drawEdges(ctx, groups, edges, nodes);
+    }
+}
+function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
 }

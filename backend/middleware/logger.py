@@ -3,19 +3,19 @@ import sys
 from pathlib import Path
 from datetime import datetime, timezone
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
+                                                                                
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOGS_DIR     = PROJECT_ROOT / "logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE     = LOGS_DIR / "app.log"
 
-# ── Log format ────────────────────────────────────────────────────────────────
+                                                                                
 
 LOG_FORMAT  = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 
-# ── Setup ─────────────────────────────────────────────────────────────────────
+                                                                                
 
 _configured = False
 
@@ -38,12 +38,12 @@ def _configure_root_logger() -> None:
 
     formatter = logging.Formatter(LOG_FORMAT, datefmt=DATE_FORMAT)
 
-    # Terminal output
+                     
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setLevel(logging.INFO)
     stream_handler.setFormatter(formatter)
 
-    # File output — append mode so logs persist across restarts
+                                                               
     file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.setFormatter(formatter)
@@ -51,7 +51,7 @@ def _configure_root_logger() -> None:
     root.addHandler(stream_handler)
     root.addHandler(file_handler)
 
-    # Quieten noisy third-party loggers
+                                       
     logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("anthropic").setLevel(logging.WARNING)
@@ -60,7 +60,7 @@ def _configure_root_logger() -> None:
     root.info(f"[logger] Logging to {LOG_FILE}")
 
 
-# ── Public API ────────────────────────────────────────────────────────────────
+                                                                                
 
 def get_logger(name: str) -> logging.Logger:
     """
@@ -76,7 +76,7 @@ def get_logger(name: str) -> logging.Logger:
     return logging.getLogger(name)
 
 
-# ── FastAPI request logging middleware ────────────────────────────────────────
+                                                                                
 
 async def log_requests(request, call_next):
     """

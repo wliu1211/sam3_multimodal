@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from services.graph import SceneGraph
 
-# ── Constants ─────────────────────────────────────────────────────────────────
+                                                                                
 
 MASK_ALPHA        = 0.45
 BORDER_THICKNESS  = 2
@@ -19,19 +19,19 @@ LABEL_THICKNESS   = 1
 LABEL_PAD         = 5
 LABEL_OFFSET_Y    = 8
 
-# For compositional queries (e.g. "man with paddle and umbrella"), a related
-# object must be within this fraction of the image diagonal to be considered
-# a companion of a given primary instance.
+                                                                            
+                                                                            
+                                          
 COMPOSITIONAL_MAX_DIST_FRACTION = 0.45
 
-# Tighter distance threshold used as fallback when a strong relational hint
-# (e.g. "holding") was given but the scene graph produced no qualifying
-# verified edge.  Avoids accepting distant "near" pairs as holding companions.
+                                                                           
+                                                                       
+                                                                              
 COMPOSITIONAL_FALLBACK_DIST_FRACTION = 0.25
 
-# Predicate vocabulary for expanding relational hints.
-# Maps each normalised predicate → acceptable predicate set (including
-# semantically similar / downgraded variants). None = accept any predicate.
+                                                      
+                                                                      
+                                                                           
 _HINT_TO_ALLOWED: dict[str, set[str] | None] = {
     "holding":        {"holding", "carrying"},
     "carrying":       {"carrying", "holding"},
@@ -43,11 +43,11 @@ _HINT_TO_ALLOWED: dict[str, set[str] | None] = {
     "walking":        {"walking", "near"},
     "playing_with":   {"playing_with", "holding", "carrying"},
     "parked_next_to": {"parked_next_to", "near"},
-    "near":           None,   # weakest hint — any predicate qualifies
+    "near":           None,                                           
 }
 
-# Predicates strong enough to warrant edge-based matching (i.e. pure
-# centroid-distance is not a reliable proxy for "holding" or "wearing").
+                                                                    
+                                                                        
 _STRONG_PREDICATES: set[str] = {
     "holding", "carrying", "wearing",
     "riding", "sitting_on", "standing_on", "on_top_of", "playing_with",
@@ -71,7 +71,7 @@ GROUP_PALETTE_HEX = [
     "#34D399", "#FB923C", "#A78BFA", "#F472B6", "#38BDF8",
 ]
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+                                                                                
 
 def render_results(
     image_bytes: bytes,
@@ -88,7 +88,7 @@ def render_results(
     h, w     = image_np.shape[:2]
     output   = image_np.copy()
 
-    # Paint all mask fills in a single alpha-blend pass
+                                                       
     overlay = image_np.copy()
     for group in groups:
         color_bgr = _hex_to_bgr(group["color"])
@@ -98,7 +98,7 @@ def render_results(
 
     cv2.addWeighted(overlay, MASK_ALPHA, output, 1 - MASK_ALPHA, 0, output)
 
-    # Draw bounding boxes and instance labels
+                                             
     for group in groups:
         color_bgr = _hex_to_bgr(group["color"])
         for instance in group["instances"]:
@@ -117,7 +117,7 @@ def render_results(
     return filename, str(save_path)
 
 
-# ── Drawing ───────────────────────────────────────────────────────────────────
+                                                                                
 
 def _draw_bounding_box(
     image:      np.ndarray,
@@ -156,7 +156,7 @@ def _draw_bounding_box(
     )
 
 
-# ── Encode / decode ───────────────────────────────────────────────────────────
+                                                                                
 
 def _decode_mask_rle(rle: list[int], width: int, height: int) -> np.ndarray:
     """
@@ -193,7 +193,7 @@ def _hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
     return (b, g, r)
 
 
-# ── Group payload builder ─────────────────────────────────────────────────────
+                                                                                
 
 def _centroid_dist(box_a: dict, box_b: dict) -> float:
     """Euclidean pixel distance between the centroids of two bounding boxes."""
@@ -243,28 +243,28 @@ def filter_compositional_instances(
     if not related_classes:
         return instances
 
-    # ── Normalise relational hints → set of required predicates ──────────────
+                                                                               
     raw_hints  = parsed_query.get("relational_hints", [])
     norm_hints = normalize_hints(raw_hints) if raw_hints else []
 
-    # Build union of allowed predicates from all hints.
-    # If any hint maps to None (e.g. "near"), every predicate is acceptable.
+                                                       
+                                                                            
     allowed_predicates: set[str] | None = set()
     for pred in norm_hints:
         expansion = _HINT_TO_ALLOWED.get(pred)
         if expansion is None:
-            allowed_predicates = None   # "near" → accept anything
+            allowed_predicates = None                             
             break
-        allowed_predicates.update(expansion)  # type: ignore[union-attr]
+        allowed_predicates.update(expansion)                            
     if not norm_hints:
-        allowed_predicates = None              # no hints → any predicate ok
+        allowed_predicates = None                                           
 
-    # Edge-based matching is only meaningful for strong spatial predicates
-    # (holding, wearing, etc.).  "near" and absent hints fall back to distance.
+                                                                          
+                                                                               
     has_strong_hints = bool(norm_hints and set(norm_hints) & _STRONG_PREDICATES)
 
-    # ── Build edge index from verified scene-graph edges ─────────────────────
-    # index: instance_id → [(other_id, predicate, confidence), ...]
+                                                                               
+                                                                   
     edge_index: dict[str, list[tuple[str, str, float]]] = defaultdict(list)
     if scene_graph is not None:
         for edge in scene_graph.verified_edges():
@@ -299,9 +299,9 @@ def filter_compositional_instances(
 
             companion: dict | None = None
 
-            # ── 1. Edge-based matching ────────────────────────────────────────
-            # Only attempt when the query carries a strong predicate hint
-            # (e.g. "holding") and the scene graph has verified edges.
+                                                                                
+                                                                         
+                                                                      
             if has_strong_hints and edge_index:
                 pool_ids  = {inst["id"] for inst in pool}
                 best: dict | None = None
@@ -321,17 +321,17 @@ def filter_compositional_instances(
 
                 companion = best
 
-            # ── 2. Distance fallback ──────────────────────────────────────────
-            # For strong predicate hints (holding, wearing, carrying, etc.):
-            # skip distance-based fallback when SGG edges are present.
-            # The VTT already enforced one-to-one assignment for these
-            # predicates, so persons that did NOT receive a verified edge
-            # should not qualify via proximity alone — centroid distance
-            # is not a reliable proxy for physical contact.
-            #
-            # If edge_index is completely empty (SGG/VTT pipeline failure),
-            # we fall back to the tight fallback_dist as a last resort so
-            # the pipeline degrades gracefully rather than returning nothing.
+                                                                                
+                                                                            
+                                                                      
+                                                                      
+                                                                         
+                                                                        
+                                                           
+             
+                                                                           
+                                                                         
+                                                                             
             if companion is None:
                 use_distance = (not has_strong_hints) or (not edge_index)
                 if use_distance:
@@ -369,9 +369,9 @@ def build_groups_payload(
     """
     targets = parsed_query["targets"]
 
-    # Index matched instances by their target_label for O(1) lookup.
-    # target_label format: "<color> <make> <type> <base_class>" — must match
-    # the _make_target_label() function in vision.py exactly.
+                                                                    
+                                                                            
+                                                             
     label_to_insts: dict[str, list[dict]] = {}
     for inst in instances:
         if inst.get("matched"):

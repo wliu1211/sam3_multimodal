@@ -28,34 +28,34 @@ from dataclasses import dataclass, field
 from anthropic import AsyncAnthropic
 from services.graph import SceneGraph, Node
 
-# ── Client ────────────────────────────────────────────────────────────────────
+                                                                                
 
 _client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# ── Data structures ───────────────────────────────────────────────────────────
+                                                                                
 
 @dataclass
 class ActivityGroup:
     id:           str
     label:        str
     node_ids:     list[str]
-    predicate:    str | None          # None for presence-only groups
+    predicate:    str | None                                         
     confidence:   float
     subject_count: int
-    color:        str = "#4ADE80"     # assigned by renderer
+    color:        str = "#4ADE80"                           
 
 
-# ── Predicates that always go through Claude label generation ─────────────────
+                                                                                
 
-# Templates produce unnatural output for these predicates — always use Claude.
+                                                                              
 ALWAYS_USE_CLAUDE = {"near", "parked_next_to"}
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+                                                                                
 
 async def build_activity_groups(
     scene_graph:  SceneGraph,
-    context_tags: list[str],          # verbs/attrs from RAM++ for label context
-    noun_tags:    list[str],           # noun concepts detected in image
+    context_tags: list[str],                                                    
+    noun_tags:    list[str],                                            
 ) -> list[ActivityGroup]:
     """
     Converts a verified scene graph into a list of ActivityGroup objects
@@ -66,8 +66,8 @@ async def build_activity_groups(
     if not scene_graph.nodes:
         return []
 
-    # ── Pass 1: bucket verified edges by (predicate, object_label) ────────────
-    buckets: dict[str, dict] = {}   # key → {subjects, objects, edges, pred}
+                                                                                
+    buckets: dict[str, dict] = {}                                           
 
     for edge in scene_graph.verified_edges():
         subject = scene_graph.get_node(edge.subject_id)
@@ -90,12 +90,12 @@ async def build_activity_groups(
             buckets[key]["objects"].append(obj)
         buckets[key]["confidences"].append(edge.confidence)
 
-    # ── Pass 2: merge buckets sharing identical subject sets ──────────────────
+                                                                                
     merged = _merge_by_subjects(list(buckets.values()))
 
-    # ── Pass 3: assign colors from palette ────────────────────────────────────
-    # Standalone (presence-only) groups are intentionally excluded — only
-    # activities involving a subject + predicate + object are surfaced.
+                                                                                
+                                                                         
+                                                                       
     PALETTE = [
         "#4ADE80", "#F87171", "#60A5FA", "#FBBF24", "#E879F9",
         "#34D399", "#FB923C", "#A78BFA", "#F472B6", "#38BDF8",
@@ -139,7 +139,7 @@ def groups_to_dict(groups: list[ActivityGroup]) -> list[dict]:
     ]
 
 
-# ── Pass 2: subject merging ───────────────────────────────────────────────────
+                                                                                
 
 def _merge_by_subjects(buckets: list[dict]) -> list[dict]:
     """
@@ -176,11 +176,11 @@ def _merge_by_subjects(buckets: list[dict]) -> list[dict]:
                 continue
             subject_ids_b = {n.id for n in b["subjects"]}
 
-            # Merge if subject sets overlap significantly (>50%)
+                                                                
             overlap = len(subject_ids_a & subject_ids_b)
             if overlap / max(len(subject_ids_a), len(subject_ids_b), 1) >= 0.5:
                 used.add(j)
-                # Add any new subjects/objects not already present
+                                                                  
                 existing_ids = {n.id for n in combined["subjects"]}
                 for n in b["subjects"]:
                     if n.id not in existing_ids:
@@ -201,7 +201,7 @@ def _merge_by_subjects(buckets: list[dict]) -> list[dict]:
     return merged
 
 
-# ── Label generation ──────────────────────────────────────────────────────────
+                                                                                
 
 async def _generate_label(raw: dict, context_tags: list[str]) -> str:
     """
@@ -236,7 +236,7 @@ def _template_label(raw: dict) -> str:
     sub_plural = _pluralise(sub_label, n_sub)
     sub_prefix = f"{n_sub} " if n_sub > 1 else "1 "
 
-    # Build predicate + object phrase
+                                     
     rel_parts = []
     for pred, obj_label in zip(predicates, object_labels):
         if pred and obj_label:
@@ -257,19 +257,19 @@ def _needs_claude(label: str, raw: dict) -> bool:
     """
     predicates = raw.get("predicates", [])
 
-    # Always use Claude for "near" and "parked_next_to" — templates sound flat
+                                                                              
     if any(p in ALWAYS_USE_CLAUDE for p in predicates if p):
         return True
 
-    # Template produced placeholder text
+                                        
     if "None" in label or "unknown" in label:
         return True
 
-    # Merged group with multiple predicates — Claude can write a better sentence
+                                                                                
     if len([p for p in predicates if p]) >= 2:
         return True
 
-    # Awkward pluralisation fallback triggered
+                                              
     if "persons" in label:
         return True
 
@@ -290,7 +290,7 @@ async def _claude_label(raw: dict, context_tags: list[str], template: str) -> st
         "subject_label": subjects[0].label if subjects else "object",
         "predicates":    predicates,
         "object_labels": object_labels,
-        "context_words": context_tags[:5],   # limit to avoid prompt bloat
+        "context_words": context_tags[:5],                                
         "template_draft": template,
     }
 
@@ -308,7 +308,7 @@ Draft: {template}"""
             }]
         )
         result = response.content[0].text.strip().strip('"').strip("'")
-        # Sanity check — if Claude returns something very long, fall back to template
+                                                                                     
         if len(result.split()) > 12:
             return template
         return result
@@ -317,7 +317,7 @@ Draft: {template}"""
         return template
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+                                                                                
 
 def _pluralise(word: str, count: int) -> str:
     """Simple English pluralisation for common object labels."""
@@ -334,10 +334,10 @@ def _pluralise(word: str, count: int) -> str:
     if word in IRREGULARS:
         return IRREGULARS[word]
 
-    # Words ending in s, x, z, ch, sh → add "es"
+                                                
     if re.search(r"(s|x|z|ch|sh)$", word):
         return word + "es"
-    # Words ending in consonant + y → replace y with ies
+                                                        
     if re.search(r"[^aeiou]y$", word):
         return word[:-1] + "ies"
 
