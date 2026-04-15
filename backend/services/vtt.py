@@ -34,28 +34,14 @@ import numpy as np
 from anthropic import AsyncAnthropic
 from services.graph import Node, Edge, SceneGraph
 
-                                                                                
 
 _client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-                                                                                
-
-                                                                   
-                                    
 CONTAINMENT_THRESHOLD = 0.90
-
-                                                              
-                                             
-                                                   
 AMBIGUOUS_LOW  = 0.35
 AMBIGUOUS_HIGH = 0.70
-
-                                                                         
-                                                                     
-                                                                
 MAX_VTT_EDGES = 40
 
-                                                                   
 DOWNGRADE_CHAIN: dict[str, str | None] = {
     "holding":        "carrying",
     "carrying":       "playing_with",
@@ -70,13 +56,12 @@ DOWNGRADE_CHAIN: dict[str, str | None] = {
     "near":           None,                                       
 }
 
-                                         
+
 _GEO_RULES: dict[str, dict] = {
     "on_top_of":      {"min_above": 0.25, "min_horiz_overlap": 0.10,
                        "max_contact_gap_fraction": 0.05},
     "riding":         {"min_above": 0.20, "min_horiz_overlap": 0.12,
                        "max_contact_gap_fraction": 0.03},
-
     "sitting_on":     {"min_above": 0.20, "min_horiz_overlap": 0.10,
                        "max_contact_gap_fraction": 0.04},
     "standing_on":    {"max_base_gap_fraction": 0.08},
@@ -89,8 +74,6 @@ _GEO_RULES: dict[str, dict] = {
     "near":           {},                                        
 }
 
-
-                                                                                
 
 async def verify_edges(
     graph:      SceneGraph,
@@ -111,17 +94,11 @@ async def verify_edges(
     """
     img_diag = (img_w ** 2 + img_h ** 2) ** 0.5
 
-                                                                                
     _verify_attribute_containment(graph, img_w, img_h)
-
-                                                                                
-                                                                                
-                                                                               
-                                                                         
     candidate_edges = sorted(graph.edges, key=lambda e: e.confidence, reverse=True)
     candidate_edges = candidate_edges[:MAX_VTT_EDGES]
 
-                                                                         
+
     tasks = []
     for edge in candidate_edges:
         subject = graph.get_node(edge.subject_id)
@@ -132,8 +109,7 @@ async def verify_edges(
             _verify_single_edge(edge, subject, obj, image_pil, img_w, img_h, img_diag)
         )
 
-                                                                              
-                                                                             
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
 
     verified_edges = []
@@ -143,22 +119,9 @@ async def verify_edges(
         if res is not None:
             verified_edges.append(res)
 
-                                                                            
-                                                                        
-                                                                               
-                                                                
     graph.edges = _enforce_one_to_one(verified_edges)
     return graph
 
-
-                                                                                
-                                                                           
-                                                                           
-                                                               
- 
-                                                                           
-                                                                    
-                                                                            
 _ONE_TO_ONE_PREDICATES: frozenset[str] = frozenset({
     "holding", "carrying", "wearing", "playing_with",
 })
@@ -183,7 +146,6 @@ def _enforce_one_to_one(edges: list[Edge]) -> list[Edge]:
     return list(best.values()) + non_exclusive
 
 
-                                                                                
 
 def _verify_attribute_containment(
     graph: SceneGraph,
@@ -215,11 +177,8 @@ def _verify_attribute_containment(
         )
 
         if overlap < CONTAINMENT_THRESHOLD:
-                                                                 
             attr_node.parent_id = None
 
-
-                                                                                
 
 async def _verify_single_edge(
     edge:      Edge,
@@ -239,19 +198,16 @@ async def _verify_single_edge(
     predicate  = edge.predicate
     confidence = edge.confidence
 
-                                                       
     if confidence < AMBIGUOUS_LOW:
         return None
 
-                                                                                
+
     geo_pass = _check_geometry(subject, obj, predicate, img_w, img_h, img_diag)
 
     if not geo_pass:
-                         
         downgraded = _downgrade(edge, subject, obj, img_w, img_h, img_diag)
         return downgraded
 
-                                                                                
     if AMBIGUOUS_LOW <= confidence <= AMBIGUOUS_HIGH:
         confirmed = await _claude_spot_check(
             subject, obj, predicate, image_pil, img_w, img_h
@@ -260,12 +216,9 @@ async def _verify_single_edge(
             downgraded = _downgrade(edge, subject, obj, img_w, img_h, img_diag)
             return downgraded
 
-                                                                                
     edge.verified = True
     return edge
 
-
-                                                                                
 
 def _check_geometry(
     subject:   Node,
@@ -291,7 +244,7 @@ def _check_geometry(
     size_ratio = area_sub / area_obj if area_obj > 0 else 1.0
     above      = subject.vertical_position_relative_to(obj)
 
-                                                                              
+
     if "min_above" in rules:
         if above < rules["min_above"]:
             return False
@@ -304,10 +257,6 @@ def _check_geometry(
         if horiz_ratio < rules["min_horiz_overlap"]:
             return False
 
-                                                                           
-                                                                       
-                                                                           
-                                                         
     if "max_contact_gap_fraction" in rules:
         a_base   = subject.bounding_box["y2"]
         b_top    = obj.bounding_box["y1"]
@@ -318,7 +267,6 @@ def _check_geometry(
             if gap_fraction > rules["max_contact_gap_fraction"]:
                 return False
 
-                                                                                
     if "max_base_gap_fraction" in rules:
         a_base = subject.bounding_box["y2"]
         b_top  = obj.bounding_box["y1"]
@@ -326,40 +274,29 @@ def _check_geometry(
         if gap_fraction > rules["max_base_gap_fraction"]:
             return False
 
-                                                                                
     if "max_norm_dist" in rules:
         if norm_dist > rules["max_norm_dist"]:
             return False
 
-                                                                                
     if "min_size_ratio" in rules:
         if size_ratio < rules["min_size_ratio"]:
             return False
 
-                                                                                
     if "min_iou" in rules:
         if iou < rules["min_iou"]:
             return False
 
-                                                                                
-                                                                               
-                                                                              
-                                                                               
-                                                                                 
     if "max_box_gap_norm" in rules:
         box_gap_norm = subject.box_edge_distance(obj) / img_diag
         if box_gap_norm > rules["max_box_gap_norm"]:
             return False
 
-                                                                                
     if "max_vert_offset" in rules:
         if abs(above) > rules["max_vert_offset"]:
             return False
 
     return True
 
-
-                                                                                
 
 def _downgrade(
     edge:     Edge,
@@ -380,28 +317,23 @@ def _downgrade(
     if next_pred is None:
         return None                                            
 
-                                                 
+
     geo_pass = _check_geometry(
         subject, obj, next_pred, img_w, img_h, img_diag
     )
 
     if not geo_pass:
-                               
         edge.predicate = next_pred
         return _downgrade(edge, subject, obj, img_w, img_h, img_diag)
 
-                        
     original = edge.original_predicate or edge.predicate
     edge.original_predicate = original
     edge.predicate          = next_pred
     edge.downgraded         = True
     edge.verified           = True
-                                                
     edge.confidence         = round(edge.confidence * 0.75, 4)
     return edge
 
-
-                                                                                
 
 async def _claude_spot_check(
     subject:   Node,
@@ -465,7 +397,6 @@ async def _claude_spot_check(
         return True                                 
 
 
-                                                                                
 
 def _mask_containment_fraction(
     child_rle:  list[int],

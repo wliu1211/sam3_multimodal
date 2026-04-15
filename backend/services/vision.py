@@ -24,32 +24,19 @@ from services.graph import Node, SceneGraph
 from services.sgg   import build_scene_graph, normalize_hints
 from services.vtt   import verify_edges
 
-                                                                                
 
 _client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-                                                                                
 
 CLIP_AMBIGUOUS_LOW    = 0.40
 CLIP_AMBIGUOUS_HIGH   = 0.70
 MIN_BOX_AREA_FRACTION = 0.001
 CROP_PADDING_PX       = 12
 
-                                                                   
+
 DEDUP_IOU_THRESHOLD   = 0.70
-
-                                                                           
-                                                                       
-                                                       
 SAM_INPUT_MAX_SIDE = 1024
-
-                                                                            
-                                                                              
-                                                                             
-                                                      
 MAX_DETECTIONS_PER_CLASS = 20
 
-                                                                                
 
 def _maybe_downscale(
     image: Image.Image,
@@ -182,16 +169,10 @@ async def run_vision_pipeline(
     image_pil    = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     img_w, img_h = image_pil.size
 
-                                                                             
-                                                                         
     sam_pil, _sx, _sy = _maybe_downscale(image_pil, SAM_INPUT_MAX_SIDE)
 
     targets          = parsed_query["targets"]
     relational_hints = parsed_query.get("relational_hints", [])
-
-                                                                                
-                                                                             
-                                                                      
 
     class_to_targets: dict[str, list[dict]] = defaultdict(list)
     for tgt in targets:
@@ -205,19 +186,11 @@ async def run_vision_pipeline(
             detections = _detect_with_sam3(sam_pil, base_class, models)
             if not detections:
                 continue
-
-                                                                                 
             detections = sorted(detections, key=lambda d: d["sam_score"], reverse=True)
             detections = detections[:MAX_DETECTIONS_PER_CLASS]
-
-                                                                               
-                                                                               
-                                                                    
             any_attrs = any(_has_attributes(t) for t in class_targets)
 
-                                                                                 
             for det in detections:
-                                                                                
                 raw_box = det["bounding_box"]
                 box = {
                     "x1": round(raw_box["x1"] * _sx),
@@ -226,7 +199,6 @@ async def run_vision_pipeline(
                     "y2": round(raw_box["y2"] * _sy),
                 }
 
-                                                                        
                 mask = det["mask"]
                 if _sx != 1.0 or _sy != 1.0:
                     mask = np.array(
@@ -238,11 +210,6 @@ async def run_vision_pipeline(
                     continue
 
                 if not any_attrs:
-                                                                            
-                                                                               
-                                                                                
-                                                                                 
-                                                                                   
                     best_target = class_targets[0]
                     best_score  = det["sam_score"]
                     all_instances.append({
@@ -258,15 +225,12 @@ async def run_vision_pipeline(
                     global_id += 1
                     continue
 
-                                                                           
                 crop = _crop_instance(image_pil, box, img_w, img_h)
 
                 best_target: dict | None = None
                 best_score               = -1.0
 
                 for tgt in class_targets:
-                                                                              
-                                                                            
                     if not _has_attributes(tgt):
                         if det["sam_score"] > best_score:
                             best_score  = det["sam_score"]
@@ -302,14 +266,9 @@ async def run_vision_pipeline(
                     "target_label": _make_target_label(base_class, best_target["attributes"]),
                 })
                 global_id += 1
-                                                                               
 
-                                                                                
     all_instances = _dedup_instances(all_instances)
 
-                                                                                
-                                                                              
-                                                                       
     distinct_classes = {inst["base_class"] for inst in all_instances}
     needs_graph = len(distinct_classes) > 1 or bool(relational_hints)
 
@@ -351,8 +310,6 @@ async def run_vision_pipeline(
 
     return all_instances, graph
 
-
-                                                                                
 
 def _detect_with_sam3(
     image_pil:  Image.Image,
@@ -397,8 +354,6 @@ def _detect_with_sam3(
     return detections
 
 
-                                                                                
-
 def _score_with_clip(
     crop:             Image.Image,
     attr_description: str,
@@ -433,8 +388,6 @@ def _score_with_clip(
 
     return float(probs[0][0].item())
 
-
-                                                                                
 
 async def _verify_with_claude_vision(
     crop:       Image.Image,
@@ -484,8 +437,6 @@ async def _verify_with_claude_vision(
         print(f"[vision] Claude Vision fallback failed: {e}")
         return False
 
-
-                                                                                
 
 def _make_target_label(base_class: str, attributes: dict) -> str:
     """

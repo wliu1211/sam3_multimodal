@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from services.graph import SceneGraph
 
-                                                                                
 
 MASK_ALPHA        = 0.45
 BORDER_THICKNESS  = 2
@@ -19,19 +18,8 @@ LABEL_THICKNESS   = 1
 LABEL_PAD         = 5
 LABEL_OFFSET_Y    = 8
 
-                                                                            
-                                                                            
-                                          
 COMPOSITIONAL_MAX_DIST_FRACTION = 0.45
-
-                                                                           
-                                                                       
-                                                                              
 COMPOSITIONAL_FALLBACK_DIST_FRACTION = 0.25
-
-                                                      
-                                                                      
-                                                                           
 _HINT_TO_ALLOWED: dict[str, set[str] | None] = {
     "holding":        {"holding", "carrying"},
     "carrying":       {"carrying", "holding"},
@@ -88,7 +76,7 @@ def render_results(
     h, w     = image_np.shape[:2]
     output   = image_np.copy()
 
-                                                       
+
     overlay = image_np.copy()
     for group in groups:
         color_bgr = _hex_to_bgr(group["color"])
@@ -98,7 +86,7 @@ def render_results(
 
     cv2.addWeighted(overlay, MASK_ALPHA, output, 1 - MASK_ALPHA, 0, output)
 
-                                             
+
     for group in groups:
         color_bgr = _hex_to_bgr(group["color"])
         for instance in group["instances"]:
@@ -117,7 +105,6 @@ def render_results(
     return filename, str(save_path)
 
 
-                                                                                
 
 def _draw_bounding_box(
     image:      np.ndarray,
@@ -156,7 +143,7 @@ def _draw_bounding_box(
     )
 
 
-                                                                                
+
 
 def _decode_mask_rle(rle: list[int], width: int, height: int) -> np.ndarray:
     """
@@ -193,7 +180,7 @@ def _hex_to_bgr(hex_color: str) -> tuple[int, int, int]:
     return (b, g, r)
 
 
-                                                                                
+
 
 def _centroid_dist(box_a: dict, box_b: dict) -> float:
     """Euclidean pixel distance between the centroids of two bounding boxes."""
@@ -243,12 +230,11 @@ def filter_compositional_instances(
     if not related_classes:
         return instances
 
-                                                                               
+
     raw_hints  = parsed_query.get("relational_hints", [])
     norm_hints = normalize_hints(raw_hints) if raw_hints else []
 
-                                                       
-                                                                            
+
     allowed_predicates: set[str] | None = set()
     for pred in norm_hints:
         expansion = _HINT_TO_ALLOWED.get(pred)
@@ -259,12 +245,8 @@ def filter_compositional_instances(
     if not norm_hints:
         allowed_predicates = None                                           
 
-                                                                          
-                                                                               
     has_strong_hints = bool(norm_hints and set(norm_hints) & _STRONG_PREDICATES)
 
-                                                                               
-                                                                   
     edge_index: dict[str, list[tuple[str, str, float]]] = defaultdict(list)
     if scene_graph is not None:
         for edge in scene_graph.verified_edges():
@@ -299,9 +281,6 @@ def filter_compositional_instances(
 
             companion: dict | None = None
 
-                                                                                
-                                                                         
-                                                                      
             if has_strong_hints and edge_index:
                 pool_ids  = {inst["id"] for inst in pool}
                 best: dict | None = None
@@ -321,17 +300,6 @@ def filter_compositional_instances(
 
                 companion = best
 
-                                                                                
-                                                                            
-                                                                      
-                                                                      
-                                                                         
-                                                                        
-                                                           
-             
-                                                                           
-                                                                         
-                                                                             
             if companion is None:
                 use_distance = (not has_strong_hints) or (not edge_index)
                 if use_distance:
@@ -369,9 +337,6 @@ def build_groups_payload(
     """
     targets = parsed_query["targets"]
 
-                                                                    
-                                                                            
-                                                             
     label_to_insts: dict[str, list[dict]] = {}
     for inst in instances:
         if inst.get("matched"):
@@ -383,7 +348,7 @@ def build_groups_payload(
         base_class = tgt["base_class"]
         attrs      = tgt["attributes"]
 
- 
+
         structured_parts = [
             v for v in [attrs.get("color"), attrs.get("make"), attrs.get("type"), base_class]
             if v

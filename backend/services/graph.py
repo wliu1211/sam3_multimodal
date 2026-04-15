@@ -10,7 +10,6 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
-                                                                                
 
 @dataclass
 class Node:
@@ -39,7 +38,7 @@ class Node:
     parent_id:    Optional[str] = None
     role:         str          = "primary"                          
 
-                                                                                
+
 
     @property
     def box_area(self) -> int:
@@ -99,7 +98,7 @@ class Node:
         return delta_y / other_h
 
 
-                                                                                
+
 
 @dataclass
 class Edge:
@@ -134,7 +133,7 @@ class Edge:
         }
 
 
-                                                                                
+
 
 @dataclass
 class SceneGraph:
@@ -147,7 +146,7 @@ class SceneGraph:
     nodes: list[Node]         = field(default_factory=list)
     edges: list[Edge]         = field(default_factory=list)
 
-                                                                                
+
 
     def get_node(self, node_id: str) -> Optional[Node]:
         for n in self.nodes:
@@ -173,7 +172,6 @@ class SceneGraph:
     def verified_edges(self) -> list[Edge]:
         return [e for e in self.edges if e.verified]
 
-                                                                                
 
     def to_dict(self) -> dict:
         """

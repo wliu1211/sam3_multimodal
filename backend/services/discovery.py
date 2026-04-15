@@ -140,16 +140,10 @@ async def run_discovery_pipeline(
                                         
         deduped = _dedup_by_iou(all_raw_instances, img_w, img_h)
 
-                                              
-                                                                        
-                                                                       
-                                                                             
         deduped = _clip_verify_instances(deduped, image_pil, img_w, img_h, models)
 
     return deduped, noun_tags, context_tags
 
-
-                                                                                
 
 def _run_ram(image_pil: Image.Image, models: dict) -> list[str]:
     """
@@ -164,18 +158,14 @@ def _run_ram(image_pil: Image.Image, models: dict) -> list[str]:
         import torch
         from ram import inference_ram, get_transform
 
-                                                                 
         transform = get_transform(image_size=384)
         image_tensor = transform(image_pil).unsqueeze(0)
 
-                                                            
         device = next(ram.parameters()).device
         image_tensor = image_tensor.to(device)
 
-                                                          
         tags_str, _ = inference_ram(image_tensor, ram)
 
-                                                                  
         return [t.strip().lower() for t in tags_str.split("|") if t.strip()]
     except Exception as e:
         print(f"[discovery] RAM++ inference failed: {e}")
@@ -193,7 +183,6 @@ def _filter_tags(raw_tags: list[str]) -> tuple[list[str], list[str]]:
     context_tags: list[str] = []
     seen:         set[str]  = set()
 
-                                                   
     implied: list[str] = []
     for tag in raw_tags:
         if tag in VERB_TO_OBJECT_HINTS:
@@ -203,7 +192,6 @@ def _filter_tags(raw_tags: list[str]) -> tuple[list[str], list[str]]:
     all_tags = raw_tags + implied
 
     for tag in all_tags:
-                           
         tag = SYNONYM_MAP.get(tag, tag)
 
         if tag in seen:
@@ -211,16 +199,13 @@ def _filter_tags(raw_tags: list[str]) -> tuple[list[str], list[str]]:
         seen.add(tag)
 
         if tag in SKIP_TAGS:
-                                                               
             if tag not in context_tags:
                 context_tags.append(tag)
             continue
 
-                                                                         
         if len(tag.split()) > 3:
             continue
 
-                                                
         if len(tag) <= 1 or tag.isdigit():
             continue
 

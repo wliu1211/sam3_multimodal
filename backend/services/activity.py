@@ -1,11 +1,6 @@
 """
 backend/services/activity.py
 
-Phase 1.5 — Activity grouping and NLP label generation.
-
-Takes a verified scene graph and produces a list of human-readable
-ActivityGroup objects, each with a natural language label and the
-set of node IDs that participate in that activity.
 
 Two-pass grouping:
   Pass 1 — bucket edges by (predicate, object_label)
@@ -28,11 +23,9 @@ from dataclasses import dataclass, field
 from anthropic import AsyncAnthropic
 from services.graph import SceneGraph, Node
 
-                                                                                
 
 _client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-                                                                                
 
 @dataclass
 class ActivityGroup:
@@ -45,12 +38,8 @@ class ActivityGroup:
     color:        str = "#4ADE80"                           
 
 
-                                                                                
-
-                                                                              
 ALWAYS_USE_CLAUDE = {"near", "parked_next_to"}
 
-                                                                                
 
 async def build_activity_groups(
     scene_graph:  SceneGraph,

@@ -4,9 +4,6 @@ backend/services/sgg.py
 Scene Graph Generation (SGG) — builds the relational graph between
 detected nodes using geometry-based spatial scoring.
 
-No learned model weights are needed. All predicate predictions are
-derived from spatial features: relative position, overlap, size ratio,
-and vertical alignment. This is robust and fast enough for a demo.
 
 Predicate vocabulary:
   holding      — subject grasps/carries object (close, size ratio ~3:1)
@@ -26,51 +23,29 @@ from itertools import combinations
 from services.graph import Node, Edge, SceneGraph
 
 
-                                                                                
-
-                                                                       
-                                                          
 MAX_DISTANCE_FRACTION = 0.50
-
-                                                             
 MIN_PREDICATE_CONFIDENCE = 0.30
-
-                                                                     
-                                                                
 SIZE_RATIO_LARGE = 3.0
 SIZE_RATIO_SMALL = 0.3
 
-                                                                    
 ANIMATE_CLASSES = {
     "person", "man", "woman", "child", "boy", "girl",
     "monkey", "dog", "cat", "bird", "horse", "elephant",
     "bear", "zebra", "giraffe", "cow", "sheep", "animal",
 }
 
-                                                                  
 LARGE_STRUCTURE_CLASSES = {
     "car", "truck", "bus", "van", "vehicle", "house",
     "building", "tree", "bench", "table",
 }
 
-                                                                      
-                                                                           
 RIDEABLE_CLASSES = {
-                      
     "bike", "bicycle", "motorcycle", "motorbike", "scooter",
     "car", "truck", "bus", "van", "vehicle", "moped",
-                    
     "horse", "donkey", "camel", "elephant",
-                          
     "skateboard", "snowboard", "surfboard", "sled", "boat",
 }
 
-
-                                                                                
-
-                                                                              
-                                                                         
-                                                 
 _HINT_MAP: dict[str, str] = {
                 
     "on":            "on_top_of",
@@ -90,20 +65,16 @@ _HINT_MAP: dict[str, str] = {
     "carrying":      "carrying",
     "carries":       "carrying",
     "with":          "holding",                                         
-             
     "wearing":       "wearing",
     "wears":         "wearing",
     "dressed in":    "wearing",
-                   
     "walking":       "walking",
     "walking with":  "walking",
     "playing with":  "playing_with",
     "playing":       "playing_with",
-            
     "riding":        "riding",
     "rides":         "riding",
     "riding on":     "riding",
-                   
     "near":          "near",
     "next to":       "parked_next_to",
     "beside":        "parked_next_to",
@@ -141,15 +112,12 @@ def normalize_hints(raw_hints: list[str]) -> list[str]:
         elif h in _HINT_MAP:
             normalised.add(_HINT_MAP[h])
         else:
-                                                                 
             for phrase, pred in _HINT_MAP.items():
                 if phrase in h or h in phrase:
                     normalised.add(pred)
                     break
     return list(normalised)
 
-
-                                                                                
 
 def build_scene_graph(
     nodes:     list[Node],
@@ -177,13 +145,9 @@ def build_scene_graph(
     img_diag = (img_w ** 2 + img_h ** 2) ** 0.5
     hints    = set(rel_hints or [])
 
-                                                 
+
     base_nodes = [n for n in nodes if not n.is_attribute]
 
-                                                                              
-                                                                             
-                                                                             
-                                              
     primary_nodes = [n for n in base_nodes if n.role == "primary"]
     related_nodes = [n for n in base_nodes if n.role == "related"]
     if primary_nodes and related_nodes:
@@ -191,21 +155,17 @@ def build_scene_graph(
     else:
         candidate_pairs = list(combinations(base_nodes, 2))
     for node_a, node_b in candidate_pairs:
-                                                                                
         dist = node_a.distance_to(node_b)
         if dist > MAX_DISTANCE_FRACTION * img_diag:
             continue
 
-                                                                                
         area_a = node_a.box_area
         area_b = node_b.box_area
         if area_a == 0 or area_b == 0:
             continue
 
-                                                                                
         scores = _score_predicates(node_a, node_b, img_w, img_h, hints)
 
-                                                            
         if not scores:
             continue
 
@@ -213,7 +173,6 @@ def build_scene_graph(
         if best_score < MIN_PREDICATE_CONFIDENCE:
             continue
 
-                                                                    
         subject, obj = _assign_subject_object(node_a, node_b, best_predicate)
 
         graph.edges.append(Edge(
